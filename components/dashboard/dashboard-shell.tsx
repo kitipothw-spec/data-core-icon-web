@@ -9,7 +9,6 @@ import {
   LogOut,
   Target,
   UserCircle,
-  Video,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 
@@ -27,11 +26,6 @@ function teacherNav(): NavItem[] {
       href: "/dashboard/teacher/report",
       label: "รายงานการพัฒนาตนเอง",
       icon: <Target className="h-5 w-5" />,
-    },
-    {
-      href: "/dashboard/teacher/resources",
-      label: "คู่มือการใช้งานระบบ (Tutorials)",
-      icon: <Video className="h-5 w-5" />,
     },
   ];
 }
