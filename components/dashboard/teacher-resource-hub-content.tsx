@@ -43,7 +43,7 @@ export function TeacherResourceHubContent() {
     setHint(null);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const t = title.trim();
     if (!t) {
@@ -54,12 +54,17 @@ export function TeacherResourceHubContent() {
       setHint("กรุณาเลือกรูปภาพตัวอย่าง");
       return;
     }
-    addTeachingResource({
-      title: t,
-      category,
-      imageUrl: previewUrl,
-    });
-    closeModal();
+    try {
+      await addTeachingResource({
+        title: t,
+        category,
+        imageUrl: previewUrl,
+      });
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาด: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function handleDownload(titleText: string) {
@@ -122,7 +127,7 @@ export function TeacherResourceHubContent() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => toggleResourceLike(item.id)}
+                  onClick={() => void toggleResourceLike(item.id, item.likedByMe)}
                   className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-bold transition ${
                     item.likedByMe
                       ? "border-rose-300 bg-rose-50 text-rose-700"
@@ -159,7 +164,7 @@ export function TeacherResourceHubContent() {
                 <h2 id="resource-modal-title" className="text-lg font-bold text-slate-900">
                   แบ่งปันสื่อการสอน
                 </h2>
-                <p className="text-sm text-slate-600">อัปโหลดรูปตัวอย่างและระบุหมวดหมู่ (ข้อมูลจำลองพร้อมต่อคลังจริง)</p>
+                <p className="text-sm text-slate-600">อัปโหลดรูปตัวอย่างและระบุหมวดหมู่ — บันทึกลง Supabase</p>
               </div>
               <button
                 type="button"

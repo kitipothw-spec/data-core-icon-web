@@ -1,9 +1,9 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
-import Image from "next/image";
-import { Camera, Target } from "lucide-react";
+import { Target } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { ProfileAvatarUploadSection } from "@/components/dashboard/profile-avatar-upload-section";
 import { useAppData } from "@/contexts/app-data-context";
 import type { TeacherProfileState } from "@/lib/teacher-storage";
 
@@ -40,13 +40,14 @@ const CATEGORY_BADGE_STYLES: Record<string, string> = {
 };
 
 export function TeacherProfileContent() {
-  const { user, updateProfileImage } = useAuth();
+  const { user } = useAuth();
   const { profile, saveProfile, addTeacherGoal, removeTeacherGoal, dataReady } = useAppData();
   const [form, setForm] = useState<TeacherProfileState>(profile);
   const [saved, setSaved] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>(GOAL_CATEGORIES[0]);
   const [goalDescription, setGoalDescription] = useState("");
-  const [profilePreview, setProfilePreview] = useState<string | null>(user?.profileImage ?? null);
+  const [goalSaving, setGoalSaving] = useState(false);
+  const [goalSuccess, setGoalSuccess] = useState(false);
 
   useEffect(() => {
     if (!dataReady) return;
@@ -63,26 +64,32 @@ export function TeacherProfileContent() {
     });
   }, [dataReady, profile, user?.name, user?.department]);
 
-  function handleProfileImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const objectUrl = URL.createObjectURL(file);
-    setProfilePreview(objectUrl);
-    updateProfileImage(objectUrl);
-  }
-
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    await saveProfile(form);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2500);
+    try {
+      await saveProfile(form);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2500);
+    } catch {
+      /* saveProfile แจ้ง alert แล้วใน AppData */
+    }
   }
 
   async function addGoalItem() {
     const nextDescription = goalDescription.trim();
     if (!nextDescription) return;
-    await addTeacherGoal(selectedCategory, nextDescription);
-    setGoalDescription("");
+    setGoalSaving(true);
+    setGoalSuccess(false);
+    try {
+      await addTeacherGoal(selectedCategory, nextDescription);
+      setGoalDescription("");
+      setGoalSuccess(true);
+      window.setTimeout(() => setGoalSuccess(false), 3500);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setGoalSaving(false);
+    }
   }
 
   async function removeGoalItem(goalId: string) {
@@ -109,41 +116,7 @@ export function TeacherProfileContent() {
         onSubmit={handleSave}
         className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md"
       >
-        <section className="mb-6 rounded-[24px] border border-slate-100 bg-white/70 p-5">
-          <h2 className="text-base font-bold text-slate-900">ข้อมูลส่วนตัว</h2>
-          <p className="mt-1 text-sm text-slate-600">อัปโหลดรูปโปรไฟล์เพื่อแสดงในระบบ</p>
-          <div className="mt-4 flex items-center gap-5">
-            <label className="group relative block cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                className="sr-only"
-                onChange={handleProfileImageUpload}
-              />
-              <div className="relative h-28 w-28 overflow-hidden rounded-full border-4 border-white shadow-lg ring-2 ring-orange-200">
-                {profilePreview ? (
-                  <Image
-                    src={profilePreview}
-                    alt="รูปโปรไฟล์ครู"
-                    fill
-                    className="object-cover"
-                    sizes="112px"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-orange-200 to-pink-200 text-sm font-semibold text-slate-700">
-                    ยังไม่มีรูป
-                  </div>
-                )}
-              </div>
-              <span className="absolute bottom-1 right-1 inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-md transition group-hover:scale-105">
-                <Camera className="h-4 w-4" />
-              </span>
-            </label>
-            <p className="text-xs font-semibold text-slate-600">
-              แตะที่รูปเพื่อเลือกรูปภาพใหม่
-            </p>
-          </div>
-        </section>
+        <ProfileAvatarUploadSection variant="teacher" />
 
         <div className="grid gap-5 md:grid-cols-2">
           <label className="flex flex-col gap-2 text-sm font-bold text-slate-800">
@@ -191,14 +164,20 @@ export function TeacherProfileContent() {
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none ring-orange-400/30 focus:ring-4 md:col-span-2"
             />
           </div>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={addGoalItem}
-              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
+              disabled={goalSaving}
+              onClick={() => void addGoalItem()}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-60"
             >
-              บันทึกเป้าหมาย
+              {goalSaving ? "กำลังบันทึก..." : "บันทึกเป้าหมาย"}
             </button>
+            {goalSuccess ? (
+              <span className="text-sm font-semibold text-emerald-600" role="status">
+                บันทึกสำเร็จ
+              </span>
+            ) : null}
           </div>
           <div className="mt-4 grid gap-3">
             {form.goals.length === 0 ? (

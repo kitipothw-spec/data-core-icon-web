@@ -13,12 +13,13 @@ import {
   UserCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { getDashboardHomeForRole } from "@/lib/auth-routes";
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
 
-function teacherNav(): NavItem[] {
+function teacherNav(home: string): NavItem[] {
   return [
-    { href: "/dashboard", label: "แดชบอร์ด", icon: <LayoutDashboard className="h-5 w-5" /> },
+    { href: home, label: "แดชบอร์ด", icon: <LayoutDashboard className="h-5 w-5" /> },
     {
       href: "/dashboard/teacher/profile",
       label: "ข้อมูลส่วนตัวและเป้าหมาย",
@@ -37,9 +38,14 @@ function teacherNav(): NavItem[] {
   ];
 }
 
-function executiveNav(): NavItem[] {
+function executiveNav(home: string): NavItem[] {
   return [
-    { href: "/dashboard", label: "แดชบอร์ด", icon: <LayoutDashboard className="h-5 w-5" /> },
+    { href: home, label: "แดชบอร์ด", icon: <LayoutDashboard className="h-5 w-5" /> },
+    {
+      href: "/dashboard/executive/profile",
+      label: "โปรไฟล์",
+      icon: <UserCircle className="h-5 w-5" />,
+    },
     {
       href: "/dashboard/executive/reports",
       label: "ศูนย์รายงานสรุปผล",
@@ -53,9 +59,9 @@ function executiveNav(): NavItem[] {
   ];
 }
 
-function adminNav(): NavItem[] {
+function adminNav(home: string): NavItem[] {
   return [
-    { href: "/dashboard", label: "แดชบอร์ด", icon: <LayoutDashboard className="h-5 w-5" /> },
+    { href: home, label: "แดชบอร์ด", icon: <LayoutDashboard className="h-5 w-5" /> },
   ];
 }
 
@@ -70,11 +76,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     }
   }, [authReady, role, router]);
 
+  const dashboardHome = useMemo(() => (role ? getDashboardHomeForRole(role) : "/dashboard"), [role]);
+
   const items = useMemo(() => {
-    if (role === "teacher") return teacherNav();
-    if (role === "executive") return executiveNav();
-    return adminNav();
-  }, [role]);
+    if (role === "teacher") return teacherNav(dashboardHome);
+    if (role === "executive") return executiveNav(dashboardHome);
+    return adminNav(dashboardHome);
+  }, [role, dashboardHome]);
 
   const roleLabel = useMemo(() => {
     if (role === "teacher") return "ครู";
@@ -90,8 +98,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   })();
 
   function isActive(href: string) {
-    if (href === "/dashboard") {
-      return pathname === "/dashboard";
+    if (href === dashboardHome) {
+      return pathname === href || pathname === "/dashboard";
     }
     return pathname === href || pathname.startsWith(`${href}/`);
   }

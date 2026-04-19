@@ -8,29 +8,35 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const vocationalData = [
-  { skill: "ด้านภาษา", value: 78 },
-  { skill: "ด้าน IT / Digital Literacy", value: 72 },
-  { skill: "การจัดการเรียนการสอน", value: 85 },
-  { skill: "ทักษะวิชาชีพเฉพาะทาง", value: 80 },
-  { skill: "นวัตกรรมและวิจัย", value: 68 },
-  { skill: "ความปลอดภัยและอาชีพ", value: 74 },
+const DEFAULT_VOCATIONAL_DATA = [
+  { skill: "ด้านภาษา", value: 55 },
+  { skill: "ด้าน IT / Digital Literacy", value: 55 },
+  { skill: "การจัดการเรียนการสอน", value: 55 },
+  { skill: "ทักษะวิชาชีพเฉพาะทาง", value: 55 },
+  { skill: "นวัตกรรมและวิจัย", value: 55 },
+  { skill: "ความปลอดภัยและอาชีพ", value: 55 },
 ];
+
+type RadarDatum = { skill: string; value: number };
 
 type VocationalRadarChartProps = {
   className?: string;
   /** ใช้ id แยก gradient เมื่อมีหลายกราฟในหน้าเดียวกัน */
   gradientId?: string;
+  /** ถ้าไม่ส่ง จะใช้ค่าเริ่มต้นกลาง ๆ (ไม่ใช้ตัวเลขจำลองสูงสุดแบบเดิม) */
+  data?: RadarDatum[];
 };
 
 export function VocationalRadarChart({
   className = "",
   gradientId = "vocRadarGradient",
+  data,
 }: VocationalRadarChartProps) {
+  const chartData = data?.length ? data : DEFAULT_VOCATIONAL_DATA;
   return (
     <div className={`h-80 w-full ${className}`}>
       <ResponsiveContainer width="100%" height="100%">
-        <RadarChart cx="50%" cy="50%" outerRadius="72%" data={vocationalData}>
+        <RadarChart cx="50%" cy="50%" outerRadius="72%" data={chartData}>
           <PolarGrid stroke="#cbd5e1" />
           <PolarAngleAxis
             dataKey="skill"

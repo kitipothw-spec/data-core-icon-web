@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GraduationCap, Lock, Mail, Sparkles } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { getDashboardHomeForRole } from "@/lib/auth-routes";
 
 export function LoginPage() {
   const router = useRouter();
-  const { user, authReady, login, usesSupabase } = useAuth();
+  const { user, authReady, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -16,7 +17,7 @@ export function LoginPage() {
   useEffect(() => {
     if (!authReady) return;
     if (user) {
-      router.replace("/dashboard");
+      router.replace(getDashboardHomeForRole(user.role));
     }
   }, [authReady, user, router]);
 
@@ -27,10 +28,14 @@ export function LoginPage() {
     const result = await login(email, password);
     setSubmitting(false);
     if (!result.ok) {
-      setError(result.error ?? "อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+      const headline = result.error ?? "เข้าสู่ระบบไม่สำเร็จ";
+      setError(headline);
+      const detail = result.errorDetail ? `\n\nรายละเอียด: ${result.errorDetail}` : "";
+      alert(`${headline}${detail}`);
       return;
     }
-    router.push("/dashboard");
+    const path = result.redirectPath ?? getDashboardHomeForRole("teacher");
+    router.push(path);
   }
 
   if (!authReady) {
@@ -114,12 +119,6 @@ export function LoginPage() {
               {submitting ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
             </button>
           </form>
-
-          <p className="mt-6 text-center text-xs text-slate-500">
-            {usesSupabase
-              ? "เข้าสู่ระบบผ่าน Supabase Auth — สร้างผู้ใช้ได้ที่แดชบอร์ด Supabase (Authentication)"
-              : "โหมดสาธิต: ไม่พบค่า Supabase ใน .env — ใช้บัญชีจำลองจาก mock-users"}
-          </p>
         </div>
       </div>
     </div>

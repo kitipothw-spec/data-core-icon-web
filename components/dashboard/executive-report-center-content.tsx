@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -14,30 +15,64 @@ import {
   YAxis,
 } from "recharts";
 import { BarChart3, Percent, Printer } from "lucide-react";
-
-const skillGaps = [
-  { skill: "การวิเคราะห์ข้อมูล", gap: 42 },
-  { skill: "สื่อดิจิทัล", gap: 55 },
-  { skill: "การประเมินเชิงรูปธรรม", gap: 38 },
-  { skill: "การจัดการชั้นเรียนเชิงรุก", gap: 29 },
-];
-
-const achievementRatios = [
-  { name: "บรรลุเป้าพัฒนาครบถ้วน", value: 52 },
-  { name: "ดำเนินการตามแผน", value: 33 },
-  { name: "ต้องเร่งติดตาม", value: 15 },
-];
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { supabase } from "@/lib/supabase";
+import {
+  fetchExecutiveReportCharts,
+  type ExecutiveReportCharts,
+} from "@/lib/supabase/executive-report-queries";
 
 const COLORS = ["#ea580c", "#db2777", "#0ea5e9", "#7c3aed"];
 
+const EMPTY_CHARTS: ExecutiveReportCharts = {
+  skillGaps: [{ skill: "ยังไม่มีข้อมูล", gap: 0 }],
+  achievementRatios: [
+    { name: "บรรลุเป้าพัฒนาครบถ้วน (≥75%)", value: 0 },
+    { name: "ดำเนินการตามแผน (45–74%)", value: 0 },
+    { name: "ต้องเร่งติดตาม (<45%)", value: 0 },
+  ],
+  summaryBullets: ["ยังไม่มีข้อมูลสำหรับสรุป"],
+};
+
 export function ExecutiveReportCenterContent() {
+  const [charts, setCharts] = useState<ExecutiveReportCharts>(EMPTY_CHARTS);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setCharts(EMPTY_CHARTS);
+      setLoading(false);
+      return;
+    }
+    try {
+      const data = await fetchExecutiveReportCharts(supabase);
+      setCharts(data);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
+      setCharts(EMPTY_CHARTS);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const skillGaps = charts.skillGaps;
+  const achievementRatios = charts.achievementRatios;
+
   return (
     <div className="print-root mx-auto max-w-6xl space-y-10">
       <div className="no-print rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
         <h1 className="text-2xl font-bold text-slate-900">ศูนย์รายงานสรุปผล</h1>
         <p className="text-sm text-slate-600">
-          สรุปช่องว่างทักษะ อัตราส่วนความสำเร็จในการพัฒนา และตัวชี้วัดภาพรวม — พร้อมพิมพ์รายงานฉบับเต็ม
+          สรุปช่องว่างทักษะ อัตราส่วนความสำเร็จในการพัฒนา และตัวชี้วัดภาพรวมจากตาราง goals และ profiles — พร้อมพิมพ์รายงานฉบับเต็ม
         </p>
+        {loading ? (
+          <p className="mt-2 text-xs font-semibold text-amber-800">กำลังโหลดข้อมูลจาก Supabase...</p>
+        ) : null}
         <button
           type="button"
           onClick={() => window.print()}
@@ -60,7 +95,7 @@ export function ExecutiveReportCenterContent() {
             รายงานสรุปภาพรวมการพัฒนาครู
           </h2>
           <p className="text-sm text-slate-600 print:text-slate-800">
-            ช่วงเวลารายงาน: ภาคเรียนปัจจุบัน (ข้อมูลจำลอง)
+            ช่วงเวลารายงาน: ภาคเรียนปัจจุบัน (ข้อมูลจากฐานข้อมูล)
           </p>
         </header>
 
@@ -70,7 +105,7 @@ export function ExecutiveReportCenterContent() {
             <h3 className="text-lg font-bold text-slate-900 print:text-black">สรุปช่องว่างทักษะ</h3>
           </div>
           <p className="mb-4 text-sm text-slate-600 print:text-slate-800">
-            ค่าที่สูงแสดงถึงความจำเป็นต้องพัฒนาในด้านนั้นมากขึ้น
+            คำนวณจากความคืบหน้าเป้าหมายและกิจกรรมที่เชื่อมในระบบ — ค่าที่สูงแสดงถึงความจำเป็นต้องพัฒนาในด้านนั้นมากขึ้น
           </p>
           <div className="h-72 print:h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -96,7 +131,7 @@ export function ExecutiveReportCenterContent() {
             </h3>
           </div>
           <p className="mb-4 text-sm text-slate-600 print:text-slate-800">
-            สัดส่วนครูตามสถานะการบรรลุแผนพัฒนาวิชาชีพ
+            คำนวณจากเปอร์เซ็นต์ความสำเร็จในโปรไฟล์ครู (goal_achievement_percent)
           </p>
           <div className="flex flex-col items-center gap-6 lg:flex-row lg:justify-center">
             <div className="h-72 w-full max-w-md">
@@ -144,9 +179,9 @@ export function ExecutiveReportCenterContent() {
         <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 print:border-slate-800 print:bg-white">
           <h3 className="text-base font-bold text-slate-900 print:text-black">สรุปผู้บริหาร</h3>
           <ul className="mt-3 list-inside list-disc space-y-2 text-sm text-slate-700 print:text-slate-900">
-            <li>ช่องว่างทักษะด้านสื่อดิจิทัลยังสูง — ควรจัดสรรหลักสูตรเสริมในรอบถัดไป</li>
-            <li>ครูร้อยละ 52 บรรลุเป้าพัฒนาครบถ้วน — เป้าหมายภาพรวมอยู่ในเกณฑ์ดี</li>
-            <li>กลุ่มที่ต้องเร่งติดตาม (15%) ควรได้รับการพูดคุยแผนรายบุคคล</li>
+            {charts.summaryBullets.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
           </ul>
         </section>
       </div>

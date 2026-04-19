@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { supabase } from "@/lib/supabase";
 
 type CourseRow = {
   id: string;
@@ -13,29 +15,12 @@ type CourseRow = {
   link: string;
 };
 
-const initialCourses: CourseRow[] = [
-  {
-    id: "C-501",
-    title: "การออกแบบการเรียนรู้เชิงรุก",
-    cover: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=400&q=80",
-    category: "หลักสูตรและการสอน",
-    applyRange: "1 พ.ค. - 31 พ.ค. 2568",
-    trainingRange: "10 มิ.ย. - 14 มิ.ย. 2568",
-    link: "https://example.go.th/register/501",
-  },
-  {
-    id: "C-502",
-    title: "เทคนิคการประเมินสมรรถนะผู้เรียน",
-    cover: "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&w=400&q=80",
-    category: "การวัดและประเมินผล",
-    applyRange: "15 พ.ค. - 15 มิ.ย. 2568",
-    trainingRange: "1 ก.ค. - 5 ก.ค. 2568",
-    link: "https://example.go.th/register/502",
-  },
-];
+const DEFAULT_COVER =
+  "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=400&q=80";
 
 export function AdminCourseManagement() {
-  const [courses, setCourses] = useState<CourseRow[]>(initialCourses);
+  const [courses, setCourses] = useState<CourseRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [courseTitle, setCourseTitle] = useState("");
   const [courseCover, setCourseCover] = useState("");
   const [courseCategory, setCourseCategory] = useState("การพัฒนาวิชาชีพ");
@@ -43,41 +28,98 @@ export function AdminCourseManagement() {
   const [trainingRange, setTrainingRange] = useState("");
   const [courseLink, setCourseLink] = useState("");
 
-  function addCourse(e: React.FormEvent) {
+  const loadCourses = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setCourses([]);
+      setLoading(false);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from("courses")
+        .select("id, title, cover_url, category, apply_range, training_range, link")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      const rows = (data ?? []) as {
+        id: string;
+        title: string;
+        cover_url: string;
+        category: string;
+        apply_range: string;
+        training_range: string;
+        link: string;
+      }[];
+      setCourses(
+        rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          cover: r.cover_url || DEFAULT_COVER,
+          category: r.category,
+          applyRange: r.apply_range,
+          trainingRange: r.training_range,
+          link: r.link || "#",
+        })),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
+      setCourses([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCourses();
+  }, [loadCourses]);
+
+  async function addCourse(e: React.FormEvent) {
     e.preventDefault();
     if (!courseTitle.trim()) return;
-    setCourses((prev) => [
-      {
-        id: `C-${1000 + prev.length + 1}`,
+    if (!isSupabaseConfigured()) {
+      alert("เกิดข้อผิดพลาด: ยังไม่ได้ตั้งค่า Supabase");
+      return;
+    }
+    try {
+      const { error } = await supabase.from("courses").insert({
         title: courseTitle.trim(),
-        cover:
-          courseCover.trim() ||
-          "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=400&q=80",
+        cover_url: courseCover.trim() || DEFAULT_COVER,
         category: courseCategory,
-        applyRange: applyRange.trim() || "กำหนดภายหลัง",
-        trainingRange: trainingRange.trim() || "กำหนดภายหลัง",
+        apply_range: applyRange.trim() || "กำหนดภายหลัง",
+        training_range: trainingRange.trim() || "กำหนดภายหลัง",
         link: courseLink.trim() || "https://example.go.th",
-      },
-      ...prev,
-    ]);
-    setCourseTitle("");
-    setCourseCover("");
-    setApplyRange("");
-    setTrainingRange("");
-    setCourseLink("");
+      });
+      if (error) throw error;
+      setCourseTitle("");
+      setCourseCover("");
+      setApplyRange("");
+      setTrainingRange("");
+      setCourseLink("");
+      await loadCourses();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
+    }
   }
 
-  function deleteCourse(id: string) {
-    setCourses((prev) => prev.filter((c) => c.id !== id));
+  async function deleteCourse(id: string) {
+    try {
+      const { error } = await supabase.from("courses").delete().eq("id", id);
+      if (error) throw error;
+      await loadCourses();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
+    }
   }
 
   return (
     <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
       <h2 className="text-lg font-bold text-slate-900">จัดการหลักสูตร / ดึงข้อมูลภายนอก</h2>
       <p className="text-sm text-slate-600">
-        ฟอร์มด้านล่างจำลองการเพิ่มข้อมูลการอบรมจากแหล่งภายนอกเข้าสู่ระบบกลาง
+        เพิ่มและลบหลักสูตรในตาราง courses — ข้อมูลจะแสดงในแดชบอร์ดครูเมื่อโหลดจากฐานข้อมูล
       </p>
-      <form onSubmit={addCourse} className="mt-6 grid gap-4 md:grid-cols-2">
+      <form onSubmit={(ev) => void addCourse(ev)} className="mt-6 grid gap-4 md:grid-cols-2">
         <label className="flex flex-col gap-2 text-sm font-semibold text-slate-800 md:col-span-2">
           ชื่อการอบรม
           <input
@@ -146,6 +188,9 @@ export function AdminCourseManagement() {
         </div>
       </form>
 
+      {loading ? (
+        <p className="mt-6 text-center text-sm font-semibold text-slate-600">กำลังโหลดหลักสูตร...</p>
+      ) : null}
       <div className="mt-10 overflow-x-auto">
         <table className="w-full min-w-[800px] border-separate border-spacing-0 text-sm">
           <thead>
@@ -181,7 +226,7 @@ export function AdminCourseManagement() {
                 <td className="px-3 py-3 text-right">
                   <button
                     type="button"
-                    onClick={() => deleteCourse(c.id)}
+                    onClick={() => void deleteCourse(c.id)}
                     className="rounded-xl border border-red-100 bg-red-50 p-2 text-red-700"
                     aria-label={`ลบ ${c.id}`}
                   >

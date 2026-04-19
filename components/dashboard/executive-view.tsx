@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useState } from "react";
 import {
   Bar,
   BarChart,
@@ -14,31 +15,16 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Camera, Sparkles, TrendingUp } from "lucide-react";
+import { Sparkles, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useAppData } from "@/contexts/app-data-context";
 import { aiInsightForWorkload, workloadTotalHours } from "@/lib/workload-mock";
 
 const COLORS = ["#fb923c", "#f472b6", "#38bdf8", "#a78bfa", "#34d399"];
 
-/** Fallback เมื่อยังไม่ได้เชื่อม Supabase หรือยังไม่มีข้อมูล */
-const FALLBACK_SKILL_GAPS = [
-  { skill: "การวิเคราะห์ข้อมูล", gap: 42 },
-  { skill: "สื่อดิจิทัล", gap: 55 },
-  { skill: "การประเมินเชิงรูปธรรม", gap: 38 },
-  { skill: "การจัดการชั้นเรียนเชิงรุก", gap: 29 },
-  { skill: "การวิจัยเชิงปฏิบัติ", gap: 47 },
-];
-
-const FALLBACK_TRAINING_TRENDS = [
-  { category: "STEM & คณิตศาสตร์", count: 128 },
-  { category: "ภาษาอังกฤษเชิงสื่อสาร", count: 112 },
-  { category: "จิตวิทยาการศึกษา", count: 96 },
-  { category: "เทคโนโลยีการสอน", count: 154 },
-  { category: "การวัดผลสมรรถนะ", count: 88 },
-];
-
-const FALLBACK_PORTFOLIO_LEVEL = [
+const EMPTY_SKILL = [{ skill: "กำลังโหลดหรือยังไม่มีข้อมูล", gap: 0 }];
+const EMPTY_TREND = [{ category: "ยังไม่มีกิจกรรม", count: 0 }];
+const EMPTY_PORTFOLIO = [
   { level: "ตนเอง", count: 0 },
   { level: "ชุมชน", count: 0 },
   { level: "สถานศึกษา", count: 0 },
@@ -47,11 +33,7 @@ const FALLBACK_PORTFOLIO_LEVEL = [
   { level: "นานาชาติ", count: 0 },
   { level: "อื่น ๆ", count: 0 },
 ];
-
-const FALLBACK_COURSE_OVERVIEW = [
-  { category: "ด้านการประยุกต์ใช้ AI", availableCourses: 0, trainedTeachers: 0 },
-  { category: "ด้านสื่อการเรียนการสอน", availableCourses: 0, trainedTeachers: 0 },
-];
+const EMPTY_COURSE = [{ category: "ยังไม่มีข้อมูลเป้าหมาย", availableCourses: 0, trainedTeachers: 0 }];
 
 function riskBadgeClasses(level: "low" | "medium" | "high") {
   if (level === "low") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
@@ -72,14 +54,13 @@ function riskDotFill(level: "low" | "medium" | "high") {
 }
 
 export function ExecutiveView() {
-  const { user, updateProfileImage, usesSupabase } = useAuth();
+  const { user, usesSupabase } = useAuth();
   const {
     executiveWorkload,
     executiveDashboard,
     executiveDashboardLoading,
     refreshExecutiveDashboard,
   } = useAppData();
-  const [profilePreview, setProfilePreview] = useState<string | null>(user?.profileImage ?? null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedPortfolioLevel, setSelectedPortfolioLevel] = useState<"ชาติ" | "นานาชาติ" | null>(
     null,
@@ -90,10 +71,10 @@ export function ExecutiveView() {
     return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "E";
   })();
 
-  const skillGaps = executiveDashboard?.skillGaps ?? FALLBACK_SKILL_GAPS;
-  const trainingTrends = executiveDashboard?.trainingTrends ?? FALLBACK_TRAINING_TRENDS;
-  const portfolioByLevel = executiveDashboard?.portfolioByLevel ?? FALLBACK_PORTFOLIO_LEVEL;
-  const courseOverviewRows = executiveDashboard?.courseOverviewRows ?? FALLBACK_COURSE_OVERVIEW;
+  const skillGaps = executiveDashboard?.skillGaps ?? EMPTY_SKILL;
+  const trainingTrends = executiveDashboard?.trainingTrends ?? EMPTY_TREND;
+  const portfolioByLevel = executiveDashboard?.portfolioByLevel ?? EMPTY_PORTFOLIO;
+  const courseOverviewRows = executiveDashboard?.courseOverviewRows ?? EMPTY_COURSE;
   const courseDetailsByCategory = executiveDashboard?.courseDetailsByCategory ?? {};
   const nationalPortfolioDetails = executiveDashboard?.nationalPortfolioDetails ?? [];
   const internationalPortfolioDetails = executiveDashboard?.internationalPortfolioDetails ?? [];
@@ -111,20 +92,6 @@ export function ExecutiveView() {
 
   const aiInsightText =
     executiveDashboard?.aiInsightText ?? aiInsightForWorkload(workloadRows);
-
-  useEffect(() => {
-    if (user?.profileImage && !user.profileImage.startsWith("blob:")) {
-      setProfilePreview(user.profileImage);
-    }
-  }, [user?.profileImage]);
-
-  async function handleProfileImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const objectUrl = URL.createObjectURL(file);
-    setProfilePreview(objectUrl);
-    await updateProfileImage(objectUrl);
-  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-10">
@@ -165,41 +132,35 @@ export function ExecutiveView() {
 
       <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
         <h2 className="text-lg font-bold text-slate-900">ข้อมูลส่วนตัว</h2>
-        <p className="text-sm text-slate-600">จัดการข้อมูลโปรไฟล์ผู้บริหารและรูปประจำตัว</p>
-        <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-slate-600">ดูโปรไฟล์สั้น ๆ — อัปโหลดรูปได้ที่หน้าโปรไฟล์</p>
+        <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <label className="group relative block cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                className="sr-only"
-                onChange={handleProfileImageUpload}
-              />
-              <div className="relative h-28 w-28 overflow-hidden rounded-full border-4 border-white shadow-lg ring-2 ring-indigo-200">
-                {profilePreview ? (
-                  <Image
-                    src={profilePreview}
-                    alt="รูปโปรไฟล์ผู้บริหาร"
-                    fill
-                    className="object-cover"
-                    sizes="112px"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-200 to-sky-200 text-lg font-bold text-slate-700">
-                    {initials}
-                  </div>
-                )}
-              </div>
-              <span className="absolute bottom-1 right-1 inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-md transition group-hover:scale-105">
-                <Camera className="h-4 w-4" />
-              </span>
-            </label>
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-4 border-white shadow-md ring-2 ring-indigo-200">
+              {user?.profileImage ? (
+                <Image
+                  src={user.profileImage}
+                  alt="รูปโปรไฟล์ผู้บริหาร"
+                  fill
+                  className="object-cover"
+                  sizes="64px"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-200 to-sky-200 text-sm font-bold text-slate-700">
+                  {initials}
+                </div>
+              )}
+            </div>
             <div>
               <p className="text-base font-bold text-slate-900">{user?.name ?? "ผู้บริหาร"}</p>
               <p className="text-sm text-slate-600">{user?.department ?? "หน่วยงานผู้บริหาร"}</p>
-              <p className="mt-1 text-xs font-semibold text-slate-500">แตะที่รูปเพื่อเปลี่ยนรูปโปรไฟล์</p>
             </div>
           </div>
+          <Link
+            href="/dashboard/executive/profile"
+            className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-md transition hover:bg-indigo-700"
+          >
+            จัดการรูปโปรไฟล์
+          </Link>
         </div>
       </section>
 

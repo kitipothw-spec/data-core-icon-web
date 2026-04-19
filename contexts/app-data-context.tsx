@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExecutiveWorkloadRow, TeachingResource } from "@/lib/app-data-types";
 import { useAuth } from "@/contexts/auth-context";
 import { DEFAULT_TEACHING_RESOURCES } from "@/lib/resource-defaults";
@@ -17,11 +18,16 @@ import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { fetchExecutiveDashboardData, type ExecutiveDashboardData } from "@/lib/supabase/executive-queries";
 import {
+  fetchTeachingResources,
+  insertTeachingResourceRow,
+  toggleResourceLikeRow,
+} from "@/lib/supabase/resource-queries";
+import {
   deleteActivity,
   deleteTeacherGoal,
   fetchTeacherProfileBundle,
   insertActivity,
-  insertTeacherGoal,
+  insertTeacherGoalWithAuthSession,
   updateActivity,
   updateTeacherProfileMeta,
 } from "@/lib/supabase/teacher-queries";
@@ -40,6 +46,10 @@ import {
 
 const RESOURCES_KEY = "data-core-icon-teaching-resources";
 const WORKLOAD_KEY = "data-core-icon-executive-workload";
+
+function dbAlert(e: unknown) {
+  alert("เกิดข้อผิดพลาด: " + (e instanceof Error ? e.message : String(e)));
+}
 
 function parseResources(raw: string | null): TeachingResource[] | null {
   if (!raw) return null;
@@ -94,8 +104,8 @@ type AppDataContextValue = {
   updatePortfolioItem: (id: string, patch: Omit<PortfolioItem, "id">) => Promise<void>;
   deletePortfolioItem: (id: string) => Promise<void>;
   refreshTeacherData: () => Promise<void>;
-  toggleResourceLike: (id: string) => void;
-  addTeachingResource: (input: Omit<TeachingResource, "id" | "likes" | "likedByMe" | "createdAt">) => void;
+  toggleResourceLike: (id: string, likedByMe: boolean) => Promise<void>;
+  addTeachingResource: (input: Omit<TeachingResource, "id" | "likes" | "likedByMe" | "createdAt">) => Promise<void>;
 };
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -112,16 +122,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [executiveDashboard, setExecutiveDashboard] = useState<ExecutiveDashboardData | null>(null);
   const [executiveDashboardLoading, setExecutiveDashboardLoading] = useState(false);
 
-  const usesSupabaseData = Boolean(supabase && user?.id && role === "teacher");
+  const usesSupabaseData = Boolean(supabase && role === "teacher");
+
+  const reloadTeachingResources = useCallback(async (client: SupabaseClient, userId: string) => {
+    try {
+      const list = await fetchTeachingResources(client, userId);
+      setTeachingResources(list);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   const initResourcesAndWorkload = useCallback(() => {
-    const rawRes = typeof window !== "undefined" ? window.localStorage.getItem(RESOURCES_KEY) : null;
-    const parsedRes = parseResources(rawRes);
-    if (parsedRes && parsedRes.length > 0) {
-      setTeachingResources(parsedRes);
-    } else {
-      setTeachingResources(DEFAULT_TEACHING_RESOURCES);
-      window.localStorage.setItem(RESOURCES_KEY, JSON.stringify(DEFAULT_TEACHING_RESOURCES));
+    const useSupabaseResources = Boolean(supabase && role === "teacher");
+    if (!useSupabaseResources) {
+      const rawRes = typeof window !== "undefined" ? window.localStorage.getItem(RESOURCES_KEY) : null;
+      const parsedRes = parseResources(rawRes);
+      if (parsedRes && parsedRes.length > 0) {
+        setTeachingResources(parsedRes);
+      } else {
+        setTeachingResources(DEFAULT_TEACHING_RESOURCES);
+        window.localStorage.setItem(RESOURCES_KEY, JSON.stringify(DEFAULT_TEACHING_RESOURCES));
+      }
     }
 
     const useLocalWorkload = !(supabase && role === "executive");
@@ -144,14 +166,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const refreshTeacherData = useCallback(async () => {
     if (!authReady) return;
-    if (supabase && user?.id && role === "teacher") {
-      const bundle = await fetchTeacherProfileBundle(supabase, user.id);
-      setProfileState(bundle.profile);
-      setPortfolioItems(bundle.activities);
+    if (supabase && role === "teacher") {
+      try {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+        if (!authUser?.id) {
+          hydrateLocalTeacher();
+          return;
+        }
+        const bundle = await fetchTeacherProfileBundle(supabase, authUser.id);
+        setProfileState(bundle.profile);
+        setPortfolioItems(bundle.activities);
+        await reloadTeachingResources(supabase, authUser.id);
+      } catch (e) {
+        dbAlert(e);
+        hydrateLocalTeacher();
+      }
       return;
     }
     hydrateLocalTeacher();
-  }, [authReady, supabase, user?.id, role, hydrateLocalTeacher]);
+  }, [authReady, supabase, role, hydrateLocalTeacher, reloadTeachingResources]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -167,6 +202,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setExecutiveWorkload(data.executiveWorkload);
     } catch (e) {
       console.error(e);
+      dbAlert(e);
     } finally {
       setExecutiveDashboardLoading(false);
     }
@@ -187,16 +223,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function loadTeacher() {
-      if (supabase && user?.id && role === "teacher") {
+      if (supabase && role === "teacher") {
         setDataReady(false);
         try {
-          const bundle = await fetchTeacherProfileBundle(supabase, user.id);
+          const {
+            data: { user: authUser },
+          } = await supabase.auth.getUser();
+          if (!authUser?.id) {
+            if (!cancelled) hydrateLocalTeacher();
+            return;
+          }
+          const bundle = await fetchTeacherProfileBundle(supabase, authUser.id);
           if (!cancelled) {
             setProfileState(bundle.profile);
             setPortfolioItems(bundle.activities);
+            await reloadTeachingResources(supabase, authUser.id);
           }
         } catch (e) {
           console.error(e);
+          if (!cancelled) dbAlert(e);
           if (!cancelled) hydrateLocalTeacher();
         } finally {
           if (!cancelled) setDataReady(true);
@@ -219,7 +264,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authReady, supabase, user?.id, role, hydrateLocalTeacher]);
+  }, [authReady, supabase, user, role, hydrateLocalTeacher, reloadTeachingResources]);
 
   const setProfile = useCallback((next: TeacherProfileState) => {
     setProfileState(next);
@@ -227,27 +272,37 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const saveProfile = useCallback(
     async (next: TeacherProfileState) => {
-      if (supabase && user?.id && role === "teacher") {
-        await updateTeacherProfileMeta(supabase, user.id, {
-          displayName: next.displayName,
-          department: next.department,
-          academicYearGoals: next.academicYearGoals,
-          goalAchievementPercent: next.goalAchievementPercent,
-        });
-        await refreshTeacherData();
-        return;
+      try {
+        if (supabase && user?.id && role === "teacher") {
+          await updateTeacherProfileMeta(supabase, user.id, {
+            displayName: next.displayName,
+            department: next.department,
+            academicYearGoals: next.academicYearGoals,
+            goalAchievementPercent: next.goalAchievementPercent,
+          });
+          await refreshTeacherData();
+          return;
+        }
+        setProfileState(next);
+        saveTeacherProfile(next);
+      } catch (e) {
+        dbAlert(e);
+        throw e;
       }
-      setProfileState(next);
-      saveTeacherProfile(next);
     },
     [supabase, user?.id, role, refreshTeacherData],
   );
 
   const addTeacherGoal = useCallback(
     async (category: string, description: string) => {
-      if (supabase && user?.id && role === "teacher") {
-        await insertTeacherGoal(supabase, user.id, category, description);
-        await refreshTeacherData();
+      if (supabase && role === "teacher") {
+        try {
+          await insertTeacherGoalWithAuthSession(supabase, category, description);
+          await refreshTeacherData();
+        } catch (e) {
+          dbAlert(e);
+          throw e;
+        }
         return;
       }
       const newGoal: TeacherGoal = {
@@ -261,14 +316,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         return merged;
       });
     },
-    [supabase, user?.id, role, refreshTeacherData],
+    [supabase, role, refreshTeacherData],
   );
 
   const removeTeacherGoal = useCallback(
     async (goalId: string) => {
       if (supabase && user?.id && role === "teacher") {
-        await deleteTeacherGoal(supabase, user.id, goalId);
-        await refreshTeacherData();
+        try {
+          await deleteTeacherGoal(supabase, user.id, goalId);
+          await refreshTeacherData();
+        } catch (e) {
+          dbAlert(e);
+          throw e;
+        }
         return;
       }
       setProfileState((prev) => {
@@ -282,10 +342,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const addPortfolioItem = useCallback(
     async (item: Omit<PortfolioItem, "id">) => {
-      if (supabase && user?.id && role === "teacher") {
-        await insertActivity(supabase, user.id, item);
-        await refreshTeacherData();
-        return;
+      try {
+        if (supabase && user?.id && role === "teacher") {
+          await insertActivity(supabase, user.id, item);
+          await refreshTeacherData();
+          return;
+        }
+      } catch (e) {
+        dbAlert(e);
+        throw e;
       }
       const updated = storageAddPortfolio(item);
       setPortfolioItems(updated);
@@ -295,10 +360,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const updatePortfolioItem = useCallback(
     async (id: string, patch: Omit<PortfolioItem, "id">) => {
-      if (supabase && user?.id && role === "teacher") {
-        await updateActivity(supabase, user.id, id, patch);
-        await refreshTeacherData();
-        return;
+      try {
+        if (supabase && user?.id && role === "teacher") {
+          await updateActivity(supabase, user.id, id, patch);
+          await refreshTeacherData();
+          return;
+        }
+      } catch (e) {
+        dbAlert(e);
+        throw e;
       }
       const updated = storageUpdatePortfolio(id, patch);
       setPortfolioItems(updated);
@@ -308,10 +378,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const deletePortfolioItem = useCallback(
     async (id: string) => {
-      if (supabase && user?.id && role === "teacher") {
-        await deleteActivity(supabase, user.id, id);
-        await refreshTeacherData();
-        return;
+      try {
+        if (supabase && user?.id && role === "teacher") {
+          await deleteActivity(supabase, user.id, id);
+          await refreshTeacherData();
+          return;
+        }
+      } catch (e) {
+        dbAlert(e);
+        throw e;
       }
       const updated = storageDeletePortfolio(id);
       setPortfolioItems(updated);
@@ -319,24 +394,76 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [supabase, user?.id, role, refreshTeacherData],
   );
 
-  const toggleResourceLike = useCallback((id: string) => {
-    setTeachingResources((prev) => {
-      const next = prev.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              likedByMe: !r.likedByMe,
-              likes: r.likedByMe ? Math.max(0, r.likes - 1) : r.likes + 1,
-            }
-          : r,
-      );
-      window.localStorage.setItem(RESOURCES_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const toggleResourceLike = useCallback(
+    async (id: string, likedByMe: boolean) => {
+      if (supabase && role === "teacher") {
+        try {
+          await toggleResourceLikeRow(supabase, id, likedByMe);
+          const {
+            data: { user: authUser },
+          } = await supabase.auth.getUser();
+          if (authUser?.id) await reloadTeachingResources(supabase, authUser.id);
+        } catch (e) {
+          console.error(e);
+          dbAlert(e);
+        }
+        return;
+      }
+      setTeachingResources((prev) => {
+        const next = prev.map((r) =>
+          r.id === id
+            ? {
+                ...r,
+                likedByMe: !r.likedByMe,
+                likes: r.likedByMe ? Math.max(0, r.likes - 1) : r.likes + 1,
+              }
+            : r,
+        );
+        window.localStorage.setItem(RESOURCES_KEY, JSON.stringify(next));
+        return next;
+      });
+    },
+    [supabase, role, reloadTeachingResources],
+  );
 
   const addTeachingResource = useCallback(
-    (input: Omit<TeachingResource, "id" | "likes" | "likedByMe" | "createdAt">) => {
+    async (input: Omit<TeachingResource, "id" | "likes" | "likedByMe" | "createdAt">) => {
+      try {
+        if (supabase && role === "teacher") {
+          const {
+            data: { user: authUser },
+            error: authErr,
+          } = await supabase.auth.getUser();
+          if (authErr || !authUser?.id) {
+            throw new Error(authErr?.message ?? "ไม่พบผู้ใช้");
+          }
+          let publicUrl = input.imageUrl;
+          if (publicUrl.startsWith("blob:") || publicUrl.startsWith("data:")) {
+            const res = await fetch(publicUrl);
+            const blob = await res.blob();
+            const ext = (blob.type.split("/")[1] ?? "jpeg").replace("jpeg", "jpg");
+            const path = `${authUser.id}/teaching-resource-${Date.now()}.${ext}`;
+            const { error: upError } = await supabase.storage.from("avatars").upload(path, blob, {
+              upsert: true,
+              contentType: blob.type || "image/jpeg",
+            });
+            if (upError) throw upError;
+            const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+            publicUrl = pub.publicUrl;
+            if (input.imageUrl.startsWith("blob:")) URL.revokeObjectURL(input.imageUrl);
+          }
+          await insertTeachingResourceRow(supabase, {
+            title: input.title,
+            category: input.category,
+            imageUrl: publicUrl,
+          });
+          await reloadTeachingResources(supabase, authUser.id);
+          return;
+        }
+      } catch (e) {
+        dbAlert(e);
+        throw e;
+      }
       setTeachingResources((prev) => {
         const row: TeachingResource = {
           ...input,
@@ -350,7 +477,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         return next;
       });
     },
-    [],
+    [supabase, role, reloadTeachingResources],
   );
 
   const value = useMemo<AppDataContextValue>(

@@ -2,7 +2,7 @@ export type TeacherGoal = {
   id: string;
   category: string;
   description: string;
-  /** จากฟังก์ชัน SQL `get_goals_with_progress` เมื่อใช้ Supabase */
+  /** จากการคำนวณความคืบหน้าใน client หลังโหลด goals + activities จาก Supabase */
   progressPercent?: number | null;
 };
 

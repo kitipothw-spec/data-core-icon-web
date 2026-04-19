@@ -3,6 +3,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth, type UserRole } from "@/contexts/auth-context";
+import { getDashboardHomeForRole } from "@/lib/auth-routes";
 
 export function RoleGate({
   forRole,
@@ -21,7 +22,7 @@ export function RoleGate({
       return;
     }
     if (role !== forRole) {
-      router.replace("/dashboard");
+      router.replace(getDashboardHomeForRole(role));
     }
   }, [authReady, role, router, forRole]);
 

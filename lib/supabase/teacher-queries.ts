@@ -10,12 +10,12 @@ type ProfileRow = {
   goal_achievement_percent: number | null;
 };
 
-type GoalProgressRpc = {
-  goal_id: string;
+type GoalRow = {
+  id: string;
+  user_id: string;
   category: string;
   description: string;
   created_at: string;
-  progress_percent: number;
 };
 
 type ActivityRow = {
@@ -54,14 +54,29 @@ function mapActivityRow(item: ActivityRow): PortfolioItem {
   };
 }
 
+/** เทียบเท่า SQL: least(100, count(activities per goal) * 25) */
+function goalsWithProgressFromRows(goals: GoalRow[], activities: ActivityRow[]): TeacherGoal[] {
+  const counts = new Map<string, number>();
+  for (const a of activities) {
+    if (!a.goal_id) continue;
+    counts.set(a.goal_id, (counts.get(a.goal_id) ?? 0) + 1);
+  }
+  return goals.map((g) => ({
+    id: g.id,
+    category: g.category,
+    description: g.description,
+    progressPercent: Math.min(100, (counts.get(g.id) ?? 0) * 25),
+  }));
+}
+
 export async function fetchTeacherProfileBundle(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<{ profile: TeacherProfileState; activities: PortfolioItem[] }> {
-  const [{ data: profileRow, error: profileError }, { data: goalsRpc, error: goalsError }, { data: actRows, error: actError }] =
+  const [{ data: profileRow, error: profileError }, { data: goalRows, error: goalsError }, { data: actRows, error: actError }] =
     await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
-      supabase.rpc("get_goals_with_progress", { p_user_id: userId }),
+      supabase.from("goals").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
       supabase
         .from("activities")
         .select("*")
@@ -74,12 +89,8 @@ export async function fetchTeacherProfileBundle(
   if (actError) throw actError;
 
   const pr = profileRow as ProfileRow | null;
-  const goals: TeacherGoal[] = ((goalsRpc ?? []) as GoalProgressRpc[]).map((g) => ({
-    id: g.goal_id,
-    category: g.category,
-    description: g.description,
-    progressPercent: g.progress_percent,
-  }));
+  const actList = (actRows ?? []) as ActivityRow[];
+  const goals = goalsWithProgressFromRows((goalRows ?? []) as GoalRow[], actList);
 
   const profile = mapProfileRowToState(
     pr ?? {
@@ -93,7 +104,7 @@ export async function fetchTeacherProfileBundle(
     goals,
   );
 
-  const activities = ((actRows ?? []) as ActivityRow[]).map(mapActivityRow);
+  const activities = actList.map(mapActivityRow);
   return { profile, activities };
 }
 
@@ -115,6 +126,27 @@ export async function updateTeacherProfileMeta(
   if (error) throw error;
 }
 
+/** สร้างแถว profiles ถ้ายังไม่มี (FK จาก auth.users อยู่แล้ว — แถวนี้ใช้ RLS และ UI) */
+export async function ensureProfileRow(
+  supabase: SupabaseClient,
+  userId: string,
+  email: string | null,
+  role: "teacher" | "executive" | "admin" = "teacher",
+) {
+  const { data: existing, error: selErr } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
+  if (selErr) throw selErr;
+  if (existing) return;
+
+  const { error } = await supabase.from("profiles").insert({
+    id: userId,
+    email,
+    full_name: email?.split("@")[0] ?? "ผู้ใช้",
+    role,
+    department: "",
+  });
+  if (error) throw error;
+}
+
 export async function insertTeacherGoal(
   supabase: SupabaseClient,
   userId: string,
@@ -127,6 +159,25 @@ export async function insertTeacherGoal(
     description,
   });
   if (error) throw error;
+}
+
+/**
+ * ใช้ supabase.auth.getUser() เป็นหลัก แล้วตรวจสอบ/สร้าง profile ก่อน insert เป้าหมาย
+ */
+export async function insertTeacherGoalWithAuthSession(
+  supabase: SupabaseClient,
+  category: string,
+  description: string,
+) {
+  const {
+    data: { user },
+    error: authErr,
+  } = await supabase.auth.getUser();
+  if (authErr) throw new Error(`Auth: ${authErr.message}`);
+  if (!user?.id) throw new Error("ไม่พบ UUID ผู้ใช้ — กรุณาเข้าสู่ระบบใหม่");
+
+  await ensureProfileRow(supabase, user.id, user.email ?? null, "teacher");
+  await insertTeacherGoal(supabase, user.id, category, description);
 }
 
 export async function deleteTeacherGoal(supabase: SupabaseClient, userId: string, goalId: string) {

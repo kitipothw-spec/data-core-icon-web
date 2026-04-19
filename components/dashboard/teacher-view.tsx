@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -19,6 +19,8 @@ import { useAppData } from "@/contexts/app-data-context";
 import { computeGoalProgressList } from "@/lib/goal-progress";
 import type { PortfolioItem } from "@/lib/teacher-storage";
 import { useAuth } from "@/contexts/auth-context";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { supabase } from "@/lib/supabase";
 
 const categories = [
   "การพัฒนาวิชาชีพ",
@@ -30,29 +32,14 @@ const categories = [
 
 const levels = ["ตนเอง", "ชุมชน", "สถานศึกษา", "จังหวัด", "ชาติ", "นานาชาติ"];
 
-const courses = [
-  {
-    title: "การออกแบบการเรียนรู้แบบโครงงาน",
-    topic: "หลักสูตรและการสอน",
-    accent: "from-amber-400 to-orange-500",
-  },
-  {
-    title: "การใช้ AI ช่วยสร้างสื่อการสอน",
-    topic: "เทคโนโลยีการศึกษา",
-    accent: "from-fuchsia-500 to-pink-500",
-  },
-  {
-    title: "การประเมินสมรรถนะผู้เรียน",
-    topic: "การวัดและประเมินผล",
-    accent: "from-sky-400 to-indigo-500",
-  },
-];
-
-const digitalBadges = [
-  { name: "Master of AI", style: "from-violet-500 to-blue-500" },
-  { name: "Innovator", style: "from-pink-500 to-rose-500" },
-  { name: "Coaching Mentor", style: "from-emerald-500 to-teal-500" },
-];
+const COURSE_ACCENTS = [
+  "from-amber-400 to-orange-500",
+  "from-fuchsia-500 to-pink-500",
+  "from-sky-400 to-indigo-500",
+  "from-emerald-400 to-teal-500",
+  "from-violet-500 to-purple-600",
+  "from-rose-400 to-orange-400",
+] as const;
 
 const GOAL_BADGE_STYLES: Record<string, string> = {
   "ด้านการจัดการเรียนการสอน (Teaching)": "from-orange-400 to-amber-400 text-white",
@@ -95,8 +82,11 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
   const [relatedGoal, setRelatedGoal] = useState("");
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [saveHint, setSaveHint] = useState<string | null>(null);
-  const teachingHours = 18;
-  const supportHours = 10;
+  const [teachingHours, setTeachingHours] = useState(18);
+  const [supportHours, setSupportHours] = useState(10);
+  const [courseCards, setCourseCards] = useState<
+    { id: string; title: string; topic: string; accent: string }[]
+  >([]);
   const workloadTotal = teachingHours + supportHours;
   const workloadPercent = Math.min(100, Math.round((workloadTotal / 40) * 100));
   const overload = workloadPercent > 85;
@@ -129,6 +119,68 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
     [profile.goals],
   );
 
+  const digitalBadges = useMemo(() => {
+    const styles = [
+      "from-violet-500 to-blue-500",
+      "from-pink-500 to-rose-500",
+      "from-emerald-500 to-teal-500",
+      "from-amber-500 to-orange-500",
+      "from-cyan-500 to-sky-500",
+    ];
+    return profile.goals.slice(0, 5).map((g, i) => ({
+      name: (g.category || "เป้าหมาย").slice(0, 32),
+      style: styles[i % styles.length]!,
+    }));
+  }, [profile.goals]);
+
+  const loadCourseCards = useCallback(async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const { data, error } = await supabase
+        .from("courses")
+        .select("id, title, category, cover_url")
+        .order("created_at", { ascending: false })
+        .limit(12);
+      if (error) throw error;
+      const rows = (data ?? []) as { id: string; title: string; category: string; cover_url: string }[];
+      setCourseCards(
+        rows.map((r, i) => ({
+          id: r.id,
+          title: r.title,
+          topic: r.category || "หลักสูตร",
+          accent: COURSE_ACCENTS[i % COURSE_ACCENTS.length]!,
+        })),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCourseCards();
+  }, [loadCourseCards]);
+
+  useEffect(() => {
+    if (!user?.id || !isSupabaseConfigured()) return;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("workload_hours")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (error) throw error;
+        const w = Number(data?.workload_hours ?? 28) || 28;
+        setTeachingHours(Math.max(0, Math.round(w * 0.58)));
+        setSupportHours(Math.max(0, Math.round(w * 0.42)));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        alert("เกิดข้อผิดพลาด: " + msg);
+      }
+    })();
+  }, [user?.id]);
+
   async function handleSubmitPortfolio(e: React.FormEvent) {
     e.preventDefault();
     if (!activityName.trim() || !date || !relatedGoal) {
@@ -159,7 +211,9 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
           : "บันทึกลงพอร์ตโฟลิโอแล้ว — ดูได้ที่เมนู รายงานการพัฒนาตนเอง",
       );
       window.setTimeout(() => setSaveHint(null), 4000);
-    } catch {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
       setSaveHint("ไม่สามารถบันทึกได้ — ตรวจสอบการเชื่อมต่อหรือสิทธิ์ Supabase");
       window.setTimeout(() => setSaveHint(null), 5000);
     }
@@ -188,7 +242,9 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
       }
       setSaveHint("ลบรายการผลงานเรียบร้อยแล้ว");
       window.setTimeout(() => setSaveHint(null), 3000);
-    } catch {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert("เกิดข้อผิดพลาด: " + msg);
       setSaveHint("ลบไม่สำเร็จ — ลองใหม่อีกครั้ง");
       window.setTimeout(() => setSaveHint(null), 4000);
     }
@@ -499,14 +555,18 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
             <h3 className="text-base font-bold text-slate-900">เหรียญตราดิจิทัล</h3>
           </div>
           <div className="flex flex-wrap gap-2">
-            {digitalBadges.map((badge) => (
-              <span
-                key={badge.name}
-                className={`rounded-full bg-gradient-to-r ${badge.style} px-3 py-1.5 text-xs font-bold text-white shadow-sm`}
-              >
-                {badge.name}
-              </span>
-            ))}
+            {digitalBadges.length === 0 ? (
+              <p className="text-xs font-medium text-slate-500">บันทึกเป้าหมายในหน้าโปรไฟล์เพื่อแสดงแบดจ์ที่เกี่ยวข้อง</p>
+            ) : (
+              digitalBadges.map((badge, i) => (
+                <span
+                  key={`${badge.name}-${i}`}
+                  className={`rounded-full bg-gradient-to-r ${badge.style} px-3 py-1.5 text-xs font-bold text-white shadow-sm`}
+                >
+                  {badge.name}
+                </span>
+              ))
+            )}
           </div>
         </div>
       </section>
@@ -575,41 +635,45 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
             <p className="text-sm text-slate-600">คัดเลือกให้ตรงกับช่องว่างสมรรถนะของคุณ</p>
           </div>
         </div>
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {courses.map((c) => (
-            <article
-              key={c.title}
-              className="overflow-hidden rounded-[24px] border border-white/70 bg-white/80 shadow-md backdrop-blur-md"
-            >
-              <div className={`relative aspect-[4/5] bg-gradient-to-br ${c.accent}`}>
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.35),transparent_45%)]" />
-                <p className="absolute bottom-3 left-3 right-3 text-sm font-bold text-white drop-shadow">
-                  {c.title}
-                </p>
-              </div>
-              <div className="space-y-3 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {c.topic}
-                </p>
-                <p className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700">
-                  {c.title.includes("AI")
-                    ? "ตรงกับความสนใจด้าน AI ของคุณ"
-                    : (goalProgressList[0]?.totalPercent ?? 0) < 65
-                      ? "แนะนำเพื่อเร่งเป้าหมายที่ยังไม่ถึงเกณฑ์"
-                      : workloadPercent < 75
-                        ? "แนะนำเพราะคุณมีเวลาว่างช่วงปิดเทอม"
-                        : "แนะนำแบบกระชับให้เหมาะกับภาระงานปัจจุบัน"}
-                </p>
-                <button
-                  type="button"
-                  className="w-full rounded-2xl bg-slate-900 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800"
-                >
-                  เริ่มเรียน
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
+        {courseCards.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-6 text-center text-sm text-slate-600">
+            ยังไม่มีหลักสูตรในระบบ — แอดมินสามารถเพิ่มได้ที่เมนู &quot;จัดการหลักสูตร&quot;
+          </p>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {courseCards.map((c) => (
+              <article
+                key={c.id}
+                className="overflow-hidden rounded-[24px] border border-white/70 bg-white/80 shadow-md backdrop-blur-md"
+              >
+                <div className={`relative aspect-[4/5] bg-gradient-to-br ${c.accent}`}>
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.35),transparent_45%)]" />
+                  <p className="absolute bottom-3 left-3 right-3 text-sm font-bold text-white drop-shadow">
+                    {c.title}
+                  </p>
+                </div>
+                <div className="space-y-3 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{c.topic}</p>
+                  <p className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700">
+                    {c.title.includes("AI")
+                      ? "ตรงกับความสนใจด้าน AI ของคุณ"
+                      : (goalProgressList[0]?.totalPercent ?? 0) < 65
+                        ? "แนะนำเพื่อเร่งเป้าหมายที่ยังไม่ถึงเกณฑ์"
+                        : workloadPercent < 75
+                          ? "แนะนำเพราะคุณมีเวลาว่างช่วงปิดเทอม"
+                          : "แนะนำแบบกระชับให้เหมาะกับภาระงานปัจจุบัน"}
+                  </p>
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl bg-slate-900 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800"
+                  >
+                    เริ่มเรียน
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

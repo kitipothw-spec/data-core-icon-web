@@ -6,6 +6,7 @@ import { FileText, Printer } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useAppData } from "@/contexts/app-data-context";
 import { computeGoalProgressList } from "@/lib/goal-progress";
+import { buildVocationalRadarData } from "@/lib/vocational-radar-from-portfolio";
 import { VocationalRadarChart } from "@/components/dashboard/vocational-radar-chart";
 
 const LEVEL_ORDER = ["ตนเอง", "ชุมชน", "สถานศึกษา", "จังหวัด", "ชาติ", "นานาชาติ"] as const;
@@ -24,6 +25,11 @@ export function TeacherDevelopmentReportContent() {
 
   const goalProgressList = useMemo(
     () => computeGoalProgressList(profile.goals, portfolioItems),
+    [portfolioItems, profile.goals],
+  );
+
+  const vocationalRadarData = useMemo(
+    () => buildVocationalRadarData(profile.goals, portfolioItems),
     [portfolioItems, profile.goals],
   );
 
@@ -170,10 +176,10 @@ export function TeacherDevelopmentReportContent() {
             กราฟทักษะครูอาชีวะ
           </h3>
           <p className="mb-4 text-sm text-slate-600 print:text-slate-800">
-            แสดงสมรรถนะหลัก 5–6 ด้านสำหรับครูอาชีวศึกษา (ข้อมูลจำลอง)
+            แสดงสมรรถนะหลัก 5–6 ด้านสำหรับครูอาชีวศึกษา (คำนวณจากเป้าหมายและพอร์ตโฟลิโอของคุณ)
           </p>
           <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4 print:border-slate-300 print:bg-white">
-            <VocationalRadarChart gradientId="vocPrintGradient" />
+            <VocationalRadarChart gradientId="vocPrintGradient" data={vocationalRadarData} />
           </div>
         </section>
 
