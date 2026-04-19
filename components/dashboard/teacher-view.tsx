@@ -9,16 +9,16 @@ import {
   Camera,
   FileText,
   LayoutDashboard,
+  Pencil,
+  Printer,
   Target,
   Timer,
+  Trash2,
 } from "lucide-react";
-import {
-  addPortfolioItem,
-  loadPortfolioItems,
-  loadTeacherProfile,
-  type PortfolioItem,
-  type TeacherProfileState,
-} from "@/lib/teacher-storage";
+import { useAppData } from "@/contexts/app-data-context";
+import { computeGoalProgressList } from "@/lib/goal-progress";
+import type { PortfolioItem } from "@/lib/teacher-storage";
+import { useAuth } from "@/contexts/auth-context";
 
 const categories = [
   "การพัฒนาวิชาชีพ",
@@ -54,19 +54,46 @@ const digitalBadges = [
   { name: "Coaching Mentor", style: "from-emerald-500 to-teal-500" },
 ];
 
+const GOAL_BADGE_STYLES: Record<string, string> = {
+  "ด้านการจัดการเรียนการสอน (Teaching)": "from-orange-400 to-amber-400 text-white",
+  "ด้านการพัฒนาวิชาชีพ/ทักษะเฉพาะทาง (Professional Skills)":
+    "from-pink-500 to-rose-500 text-white",
+  "ด้านงานวิจัยและนวัตกรรม (Research & Innovation)":
+    "from-violet-500 to-fuchsia-500 text-white",
+  "ด้านการดูแลช่วยเหลือนักเรียน (Student Support)":
+    "from-emerald-400 to-green-500 text-white",
+  "ด้านงานบริหาร/งานพิเศษ (Administration)": "from-slate-500 to-slate-700 text-white",
+  "ด้านคุณธรรม จริยธรรม และจรรยาบรรณ (Ethics)": "from-yellow-400 to-orange-500 text-white",
+  "ด้านสื่อการเรียนการสอน (Instructional Media)": "from-indigo-500 to-sky-500 text-white",
+  "ด้านการประยุกต์ใช้ AI ในการศึกษา (AI in Education)":
+    "from-purple-600 to-blue-500 text-white",
+  "ด้านทักษะดิจิทัลและเทคโนโลยี (Digital Literacy & Tech)":
+    "from-cyan-500 to-teal-500 text-white",
+  "ด้านการพัฒนาทักษะแห่งศตวรรษที่ 21 (21st Century Skills)":
+    "from-blue-500 to-indigo-600 text-white",
+};
+
 type TeacherViewProps = {
   teacherName?: string;
 };
 
 export function TeacherView({ teacherName = "ครูสมชาย" }: TeacherViewProps) {
+  const { user } = useAuth();
+  const {
+    profile,
+    portfolioItems,
+    refreshTeacherData,
+    addPortfolioItem: ctxAddPortfolio,
+    updatePortfolioItem: ctxUpdatePortfolio,
+    deletePortfolioItem: ctxDeletePortfolio,
+    dataReady,
+  } = useAppData();
   const [activityName, setActivityName] = useState("");
   const [category, setCategory] = useState(categories[0]);
   const [level, setLevel] = useState(levels[0]);
   const [date, setDate] = useState("");
-  const [profile, setProfile] = useState<TeacherProfileState>(loadTeacherProfile);
-  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>([]);
   const [relatedGoal, setRelatedGoal] = useState("");
-  const [goalContributionPercent, setGoalContributionPercent] = useState(0);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [saveHint, setSaveHint] = useState<string | null>(null);
   const teachingHours = 18;
   const supportHours = 10;
@@ -77,57 +104,94 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
   useEffect(() => {
     function refreshData() {
       startTransition(() => {
-        const loadedProfile = loadTeacherProfile();
-        setProfile(loadedProfile);
-        setPortfolioItems(loadPortfolioItems());
-        setRelatedGoal((prev) =>
-          prev
-            ? prev
-            : loadedProfile.goalCategories.length > 0
-              ? loadedProfile.goalCategories[0]
-              : "",
-        );
+        refreshTeacherData();
       });
     }
     refreshData();
     window.addEventListener("focus", refreshData);
     return () => window.removeEventListener("focus", refreshData);
-  }, []);
+  }, [refreshTeacherData]);
 
-  const goalProgressList = useMemo(() => {
-    const selectedGoals = profile.goalCategories;
-    if (selectedGoals.length === 0) return [];
-    return selectedGoals.map((goal) => {
-      const total = portfolioItems
-        .filter((item) => item.relatedGoal === goal)
-        .reduce((sum, item) => sum + item.goalContributionPercent, 0);
-      return {
-        goal,
-        totalPercent: Math.min(100, total),
-      };
-    });
-  }, [portfolioItems, profile.goalCategories]);
+  useEffect(() => {
+    if (!dataReady) return;
+    setRelatedGoal((prev) =>
+      prev ? prev : profile.goals.length > 0 ? profile.goals[0].id : "",
+    );
+  }, [dataReady, profile.goals]);
 
-  function handleAddPortfolio(e: React.FormEvent) {
+  const goalProgressList = useMemo(
+    () => computeGoalProgressList(profile.goals, portfolioItems),
+    [portfolioItems, profile.goals],
+  );
+
+  const goalLookup = useMemo(
+    () => new Map(profile.goals.map((goal) => [goal.id, goal])),
+    [profile.goals],
+  );
+
+  async function handleSubmitPortfolio(e: React.FormEvent) {
     e.preventDefault();
     if (!activityName.trim() || !date || !relatedGoal) {
       setSaveHint("กรุณากรอกชื่อกิจกรรม วันที่ และเป้าหมายที่เกี่ยวข้อง");
       return;
     }
-    const updatedItems = addPortfolioItem({
+    const payload = {
       title: activityName.trim(),
       category,
       level,
       date,
       relatedGoal,
-      goalContributionPercent,
-    });
-    setPortfolioItems(updatedItems);
-    setActivityName("");
-    setDate("");
-    setGoalContributionPercent(0);
-    setSaveHint("บันทึกลงพอร์ตโฟลิโอแล้ว — ดูได้ที่เมนู รายงานการพัฒนาตนเอง");
-    window.setTimeout(() => setSaveHint(null), 4000);
+      goalContributionPercent: 25,
+    };
+    const wasEditing = Boolean(editingItemId);
+    try {
+      if (editingItemId) {
+        await ctxUpdatePortfolio(editingItemId, payload);
+      } else {
+        await ctxAddPortfolio(payload);
+      }
+      setEditingItemId(null);
+      setActivityName("");
+      setDate("");
+      setSaveHint(
+        wasEditing
+          ? "บันทึกการแก้ไขเรียบร้อยแล้ว"
+          : "บันทึกลงพอร์ตโฟลิโอแล้ว — ดูได้ที่เมนู รายงานการพัฒนาตนเอง",
+      );
+      window.setTimeout(() => setSaveHint(null), 4000);
+    } catch {
+      setSaveHint("ไม่สามารถบันทึกได้ — ตรวจสอบการเชื่อมต่อหรือสิทธิ์ Supabase");
+      window.setTimeout(() => setSaveHint(null), 5000);
+    }
+  }
+
+  function handleEditPortfolio(item: PortfolioItem) {
+    setEditingItemId(item.id);
+    setActivityName(item.title);
+    setCategory(item.category);
+    setLevel(item.level);
+    setDate(item.date);
+    const matchedGoal = profile.goals.find(
+      (goal) => goal.id === item.relatedGoal || goal.category === item.relatedGoal,
+    );
+    setRelatedGoal(matchedGoal?.id ?? "");
+    setSaveHint("กำลังแก้ไขรายการผลงาน");
+  }
+
+  async function handleDeletePortfolio(id: string) {
+    try {
+      await ctxDeletePortfolio(id);
+      if (editingItemId === id) {
+        setEditingItemId(null);
+        setActivityName("");
+        setDate("");
+      }
+      setSaveHint("ลบรายการผลงานเรียบร้อยแล้ว");
+      window.setTimeout(() => setSaveHint(null), 3000);
+    } catch {
+      setSaveHint("ลบไม่สำเร็จ — ลองใหม่อีกครั้ง");
+      window.setTimeout(() => setSaveHint(null), 4000);
+    }
   }
 
   function goalProgressColor(percent: number) {
@@ -143,7 +207,10 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
         <div className="flex items-center gap-4">
           <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full ring-4 ring-orange-200/80 ring-offset-2 ring-offset-[#F8FAFC]">
             <Image
-              src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"
+              src={
+                user?.profileImage ||
+                "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"
+              }
               alt={`รูปโปรไฟล์${teacherName}`}
               fill
               className="object-cover"
@@ -162,7 +229,7 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
         </div>
       </header>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section className="grid gap-6 lg:grid-cols-3">
         <Link
           href="/dashboard/teacher/profile"
           className="group flex flex-col justify-between rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md transition hover:ring-2 hover:ring-orange-300"
@@ -200,6 +267,26 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
           </div>
           <span className="mt-4 text-sm font-bold text-pink-600 group-hover:underline">
             ไปที่หน้านี้ →
+          </span>
+        </Link>
+
+        <Link
+          href="/dashboard/teacher/report"
+          className="group flex flex-col justify-between rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md transition hover:ring-2 hover:ring-indigo-300"
+        >
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-[18px] bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
+              <Printer className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">พิมพ์รายงานการพัฒนาตนเอง</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                เปิดหน้ารายงานฉบับเต็ม พร้อมหัวกระดาษ A4 และตารางแยกตามระดับกิจกรรม
+              </p>
+            </div>
+          </div>
+          <span className="mt-4 text-sm font-bold text-indigo-600 group-hover:underline">
+            พิมพ์ / บันทึก PDF →
           </span>
         </Link>
       </section>
@@ -249,27 +336,44 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
           <BookOpen className="h-5 w-5 text-orange-500" aria-hidden />
         </div>
         <p className="text-sm text-slate-600">
-          คำนวณอัตโนมัติจากกิจกรรมที่เชื่อมกับเป้าหมายในเมนู &quot;ข้อมูลส่วนตัวและเป้าหมาย&quot;
+          คำนวณอัตโนมัติจากกิจกรรมที่เชื่อมกับเป้าหมายรายข้อในเมนู &quot;ข้อมูลส่วนตัวและเป้าหมาย&quot;
         </p>
-        <div className="mt-6 space-y-4">
+        <div className="mt-6 grid gap-4">
           {goalProgressList.length === 0 ? (
             <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
               ยังไม่มีเป้าหมายที่เลือกไว้ กรุณาเพิ่มหมวดหมู่เป้าหมายก่อน
             </p>
           ) : (
             goalProgressList.map((goalItem) => (
-              <div key={goalItem.goal}>
-                <div className="mb-2 flex justify-between text-sm font-semibold text-slate-700">
-                  <span>{goalItem.goal}</span>
-                  <span>{goalItem.totalPercent}%</span>
+              <article
+                key={goalItem.id}
+                className="rounded-[24px] border border-white/80 bg-white/80 p-5 shadow-md backdrop-blur-md"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <span
+                    className={`rounded-full bg-gradient-to-r px-3 py-1.5 text-xs font-bold shadow-sm ${
+                      GOAL_BADGE_STYLES[goalItem.goal] ?? "from-slate-500 to-slate-700 text-white"
+                    }`}
+                  >
+                    {goalItem.goal}
+                  </span>
+                  <span className="text-sm font-bold text-slate-700">
+                    ความคืบหน้า: {goalItem.totalPercent}%
+                  </span>
                 </div>
+                <p className="mb-4 text-sm leading-relaxed text-slate-700">
+                  รายละเอียดเป้าหมาย: {goalItem.description}
+                </p>
                 <div className="h-4 w-full overflow-hidden rounded-full bg-slate-200/80">
                   <div
                     className={`h-full rounded-full bg-gradient-to-r ${goalProgressColor(goalItem.totalPercent)} shadow-inner transition-[width]`}
                     style={{ width: `${goalItem.totalPercent}%` }}
                   />
                 </div>
-              </div>
+                <p className="mt-2 text-xs font-semibold text-slate-500">
+                  {goalItem.linkedCount} กิจกรรมที่เกี่ยวข้อง
+                </p>
+              </article>
             ))
           )}
         </div>
@@ -278,9 +382,9 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
       <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
         <h2 className="text-lg font-bold text-slate-900">เพิ่มพอร์ตโฟลิโอ / อัปเดตแผนพัฒนา</h2>
         <p className="mt-1 text-sm text-slate-600">
-          กรอกข้อมูลกิจกรรมหรือการอบรมแล้วกดบันทึกลงพอร์ต — รายการจะแสดงในรายงานการพัฒนาตนเอง
+          กรอกข้อมูลกิจกรรมหรือการอบรม แล้วเลือกเป้าหมายที่เกี่ยวข้องเพื่อบันทึกความคืบหน้า
         </p>
-        <form onSubmit={handleAddPortfolio} className="mt-6 grid gap-5 md:grid-cols-2">
+        <form onSubmit={handleSubmitPortfolio} className="mt-6 grid gap-5 md:grid-cols-2">
           <label className="flex flex-col gap-2 text-sm font-semibold text-slate-800 md:col-span-2">
             ชื่อกิจกรรม/การอบรม
             <input
@@ -334,28 +438,15 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
               onChange={(e) => setRelatedGoal(e.target.value)}
               className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-normal text-slate-900 outline-none ring-orange-400/30 focus:ring-4"
             >
-              {profile.goalCategories.length === 0 ? (
+              {profile.goals.length === 0 ? (
                 <option value="">ยังไม่มีเป้าหมาย กรุณาเพิ่มในหน้าโปรไฟล์</option>
               ) : null}
-              {profile.goalCategories.map((goal) => (
-                <option key={goal} value={goal}>
-                  {goal}
+              {profile.goals.map((goal) => (
+                <option key={goal.id} value={goal.id}>
+                  {goal.category}: {goal.description}
                 </option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-2 text-sm font-semibold text-slate-800">
-            ความสำเร็จที่เพิ่มขึ้น (%)
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={goalContributionPercent}
-              onChange={(e) => setGoalContributionPercent(Number(e.target.value))}
-              className="h-2 cursor-pointer accent-orange-500"
-              aria-label="ความสำเร็จที่เพิ่มขึ้น"
-            />
-            <span className="text-xs font-bold text-slate-600">{goalContributionPercent}%</span>
           </label>
           <div className="flex flex-wrap gap-3 md:col-span-2">
             <button
@@ -378,8 +469,22 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
               type="submit"
               className="rounded-[24px] bg-gradient-to-r from-orange-400 to-pink-500 px-6 py-3 text-sm font-bold text-white shadow-md"
             >
-              บันทึกลงพอร์ตโฟลิโอ
+              {editingItemId ? "บันทึกการแก้ไข" : "บันทึกลงพอร์ตโฟลิโอ"}
             </button>
+            {editingItemId ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingItemId(null);
+                  setActivityName("");
+                  setDate("");
+                  setSaveHint(null);
+                }}
+                className="ml-3 rounded-[24px] border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-700"
+              >
+                ยกเลิกการแก้ไข
+              </button>
+            ) : null}
             {saveHint ? (
               <p className="mt-3 text-sm font-semibold text-emerald-600" role="status">
                 {saveHint}
@@ -409,7 +514,7 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
       <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
         <h2 className="text-lg font-bold text-slate-900">ประวัติกิจกรรมล่าสุด</h2>
         <p className="mt-1 text-sm text-slate-600">
-          แต่ละกิจกรรมจะแสดงเป้าหมายที่เกี่ยวข้องและเปอร์เซ็นต์ที่ช่วยเพิ่มความสำเร็จ
+          สามารถแก้ไขหรือลบรายการได้ และระบบจะคำนวณความคืบหน้าเป้าหมายใหม่ให้อัตโนมัติ
         </p>
         <div className="mt-5 grid gap-4">
           {portfolioItems.length === 0 ? (
@@ -417,24 +522,48 @@ export function TeacherView({ teacherName = "ครูสมชาย" }: Teache
               ยังไม่มีกิจกรรมที่บันทึกไว้
             </p>
           ) : (
-            portfolioItems.slice(0, 6).map((item) => (
-              <article
-                key={item.id}
-                className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">{item.title}</h3>
-                    <p className="text-xs text-slate-600">
-                      {item.category} · {item.level} · {item.date}
-                    </p>
+            portfolioItems.slice(0, 6).map((item) => {
+              const matchedGoal = goalLookup.get(item.relatedGoal);
+              const goalLabel = matchedGoal
+                ? `${matchedGoal.category}: ${matchedGoal.description}`
+                : item.relatedGoal || "ไม่ระบุเป้าหมาย";
+              return (
+                <article
+                  key={item.id}
+                  className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">{item.title}</h3>
+                      <p className="text-xs text-slate-600">
+                        {item.category} · {item.level} · {item.date}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-gradient-to-r from-amber-400 to-emerald-500 px-3 py-1 text-xs font-bold text-white">
+                      {goalLabel} · +25%
+                    </span>
                   </div>
-                  <span className="rounded-full bg-gradient-to-r from-amber-400 to-emerald-500 px-3 py-1 text-xs font-bold text-white">
-                    {item.relatedGoal || "ไม่ระบุเป้าหมาย"} · +{item.goalContributionPercent}%
-                  </span>
-                </div>
-              </article>
-            ))
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleEditPortfolio(item)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      แก้ไข
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePortfolio(item.id)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      ลบ
+                    </button>
+                  </div>
+                </article>
+              );
+            })
           )}
         </div>
       </section>

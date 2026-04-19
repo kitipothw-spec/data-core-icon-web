@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Award,
   FileBarChart,
   LayoutDashboard,
+  LayoutGrid,
   LogOut,
   Target,
   UserCircle,
@@ -26,6 +28,11 @@ function teacherNav(): NavItem[] {
       href: "/dashboard/teacher/report",
       label: "รายงานการพัฒนาตนเอง",
       icon: <Target className="h-5 w-5" />,
+    },
+    {
+      href: "/dashboard/teacher/resources",
+      label: "คลังนวัตกรรมและสื่อการสอน",
+      icon: <LayoutGrid className="h-5 w-5" />,
     },
   ];
 }
@@ -76,6 +83,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return "";
   }, [role]);
 
+  const initials = (() => {
+    if (!user?.name) return "U";
+    const parts = user.name.trim().split(/\s+/).filter(Boolean);
+    return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "U";
+  })();
+
   function isActive(href: string) {
     if (href === "/dashboard") {
       return pathname === "/dashboard";
@@ -83,8 +96,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     router.replace("/");
   }
 
@@ -108,14 +121,33 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     <div className="dashboard-app flex min-h-screen bg-[#F8FAFC] print:block print:min-h-0">
       <aside className="no-print flex w-64 shrink-0 flex-col border-r border-slate-800/80 bg-[#1e293b] text-white shadow-xl print:hidden">
         <div className="border-b border-white/10 px-5 py-6">
-          <p className="text-xs font-semibold uppercase tracking-widest text-orange-300">
-            DATA-CORE-ICON
-          </p>
-          <p className="mt-1 text-lg font-bold leading-tight">
-            {role === "teacher" && "พื้นที่ครู"}
-            {role === "executive" && "พื้นที่ผู้บริหาร"}
-            {role === "admin" && "พื้นที่ผู้ดูแล"}
-          </p>
+          <div className="flex items-center gap-3">
+            <div className="relative h-12 w-12 overflow-hidden rounded-full ring-2 ring-orange-300/70 ring-offset-2 ring-offset-slate-900">
+              {user.profileImage ? (
+                <Image
+                  src={user.profileImage}
+                  alt={`รูปโปรไฟล์${user.name}`}
+                  fill
+                  className="object-cover"
+                  sizes="48px"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-orange-400 to-pink-500 text-sm font-bold text-white">
+                  {initials}
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-orange-300">
+                DATA-CORE-ICON
+              </p>
+              <p className="mt-1 text-lg font-bold leading-tight">
+                {role === "teacher" && "พื้นที่ครู"}
+                {role === "executive" && "พื้นที่ผู้บริหาร"}
+                {role === "admin" && "พื้นที่ผู้ดูแล"}
+              </p>
+            </div>
+          </div>
           <p className="mt-3 text-xs font-semibold leading-snug text-white/80">
             {user.name}
             <span className="mt-1 block text-[11px] font-medium text-white/60">

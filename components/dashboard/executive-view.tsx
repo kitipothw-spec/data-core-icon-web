@@ -1,18 +1,28 @@
 "use client";
 
+import Image from "next/image";
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { TrendingUp } from "lucide-react";
+import { Camera, Sparkles, TrendingUp } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
+import { useAppData } from "@/contexts/app-data-context";
+import { aiInsightForWorkload, workloadTotalHours } from "@/lib/workload-mock";
 
-const skillGaps = [
+const COLORS = ["#fb923c", "#f472b6", "#38bdf8", "#a78bfa", "#34d399"];
+
+/** Fallback เมื่อยังไม่ได้เชื่อม Supabase หรือยังไม่มีข้อมูล */
+const FALLBACK_SKILL_GAPS = [
   { skill: "การวิเคราะห์ข้อมูล", gap: 42 },
   { skill: "สื่อดิจิทัล", gap: 55 },
   { skill: "การประเมินเชิงรูปธรรม", gap: 38 },
@@ -20,7 +30,7 @@ const skillGaps = [
   { skill: "การวิจัยเชิงปฏิบัติ", gap: 47 },
 ];
 
-const trainingTrends = [
+const FALLBACK_TRAINING_TRENDS = [
   { category: "STEM & คณิตศาสตร์", count: 128 },
   { category: "ภาษาอังกฤษเชิงสื่อสาร", count: 112 },
   { category: "จิตวิทยาการศึกษา", count: 96 },
@@ -28,26 +38,94 @@ const trainingTrends = [
   { category: "การวัดผลสมรรถนะ", count: 88 },
 ];
 
-const COLORS = ["#fb923c", "#f472b6", "#38bdf8", "#a78bfa", "#34d399"];
-
-const portfolioByLevel = [
-  { level: "ตนเอง", count: 420 },
-  { level: "ชุมชน", count: 186 },
-  { level: "สถานศึกษา", count: 244 },
-  { level: "จังหวัด", count: 132 },
-  { level: "ชาติ", count: 61 },
-  { level: "นานาชาติ", count: 18 },
+const FALLBACK_PORTFOLIO_LEVEL = [
+  { level: "ตนเอง", count: 0 },
+  { level: "ชุมชน", count: 0 },
+  { level: "สถานศึกษา", count: 0 },
+  { level: "จังหวัด", count: 0 },
+  { level: "ชาติ", count: 0 },
+  { level: "นานาชาติ", count: 0 },
+  { level: "อื่น ๆ", count: 0 },
 ];
 
-const burnoutByDepartment = [
-  { dept: "คณิตศาสตร์", workload: 83, burnoutRisk: 62 },
-  { dept: "ภาษาไทย", workload: 71, burnoutRisk: 48 },
-  { dept: "วิทยาศาสตร์", workload: 88, burnoutRisk: 69 },
-  { dept: "อาชีวะ/เทคนิค", workload: 91, burnoutRisk: 76 },
-  { dept: "ภาษาต่างประเทศ", workload: 66, burnoutRisk: 40 },
+const FALLBACK_COURSE_OVERVIEW = [
+  { category: "ด้านการประยุกต์ใช้ AI", availableCourses: 0, trainedTeachers: 0 },
+  { category: "ด้านสื่อการเรียนการสอน", availableCourses: 0, trainedTeachers: 0 },
 ];
+
+function riskBadgeClasses(level: "low" | "medium" | "high") {
+  if (level === "low") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
+  if (level === "medium") return "bg-amber-100 text-amber-900 ring-amber-200";
+  return "bg-rose-100 text-rose-800 ring-rose-200";
+}
+
+function riskLabelTh(level: "low" | "medium" | "high") {
+  if (level === "low") return "ต่ำ (ปลอดภัย)";
+  if (level === "medium") return "ปานกลาง (เฝ้าระวัง)";
+  return "สูง (เสี่ยงหมดไฟ)";
+}
+
+function riskDotFill(level: "low" | "medium" | "high") {
+  if (level === "low") return "#10b981";
+  if (level === "medium") return "#f59e0b";
+  return "#f43f5e";
+}
 
 export function ExecutiveView() {
+  const { user, updateProfileImage, usesSupabase } = useAuth();
+  const {
+    executiveWorkload,
+    executiveDashboard,
+    executiveDashboardLoading,
+    refreshExecutiveDashboard,
+  } = useAppData();
+  const [profilePreview, setProfilePreview] = useState<string | null>(user?.profileImage ?? null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedPortfolioLevel, setSelectedPortfolioLevel] = useState<"ชาติ" | "นานาชาติ" | null>(
+    null,
+  );
+  const initials = (() => {
+    if (!user?.name) return "E";
+    const parts = user.name.trim().split(/\s+/).filter(Boolean);
+    return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "E";
+  })();
+
+  const skillGaps = executiveDashboard?.skillGaps ?? FALLBACK_SKILL_GAPS;
+  const trainingTrends = executiveDashboard?.trainingTrends ?? FALLBACK_TRAINING_TRENDS;
+  const portfolioByLevel = executiveDashboard?.portfolioByLevel ?? FALLBACK_PORTFOLIO_LEVEL;
+  const courseOverviewRows = executiveDashboard?.courseOverviewRows ?? FALLBACK_COURSE_OVERVIEW;
+  const courseDetailsByCategory = executiveDashboard?.courseDetailsByCategory ?? {};
+  const nationalPortfolioDetails = executiveDashboard?.nationalPortfolioDetails ?? [];
+  const internationalPortfolioDetails = executiveDashboard?.internationalPortfolioDetails ?? [];
+
+  const workloadRows = executiveDashboard?.executiveWorkload?.length
+    ? executiveDashboard.executiveWorkload
+    : executiveWorkload;
+
+  const workloadChartPoints = workloadRows.map((row) => ({
+    dept: row.dept,
+    workload: workloadTotalHours(row),
+    engagement: row.engagementScore,
+    risk: row.riskLevel,
+  }));
+
+  const aiInsightText =
+    executiveDashboard?.aiInsightText ?? aiInsightForWorkload(workloadRows);
+
+  useEffect(() => {
+    if (user?.profileImage && !user.profileImage.startsWith("blob:")) {
+      setProfilePreview(user.profileImage);
+    }
+  }, [user?.profileImage]);
+
+  async function handleProfileImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    setProfilePreview(objectUrl);
+    await updateProfileImage(objectUrl);
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-10">
       <header className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
@@ -58,13 +136,72 @@ export function ExecutiveView() {
             <p className="text-sm text-slate-600">
               แสดงเฉพาะข้อมูลเชิงวิเคราะห์ ช่องว่างทักษะ แนวโน้มการอบรม และสรุปพอร์ตตามระดับกิจกรรม
             </p>
+            {usesSupabase ? (
+              <p className="mt-2 text-xs font-semibold text-emerald-700">
+                เชื่อมต่อ Supabase — สรุปจากตาราง profiles · goals · activities
+              </p>
+            ) : null}
           </div>
-          <div className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">
-            <TrendingUp className="h-4 w-4 text-emerald-400" />
-            โหมดดูอย่างเดียว
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
+            {executiveDashboardLoading ? (
+              <span className="rounded-2xl bg-amber-100 px-4 py-2 text-xs font-bold text-amber-900">
+                กำลังโหลดข้อมูลวิเคราะห์...
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void refreshExecutiveDashboard()}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-sm transition hover:bg-slate-50"
+            >
+              รีเฟรชข้อมูล
+            </button>
+            <div className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">
+              <TrendingUp className="h-4 w-4 text-emerald-400" />
+              โหมดดูอย่างเดียว
+            </div>
           </div>
         </div>
       </header>
+
+      <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
+        <h2 className="text-lg font-bold text-slate-900">ข้อมูลส่วนตัว</h2>
+        <p className="text-sm text-slate-600">จัดการข้อมูลโปรไฟล์ผู้บริหารและรูปประจำตัว</p>
+        <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <label className="group relative block cursor-pointer">
+              <input
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                onChange={handleProfileImageUpload}
+              />
+              <div className="relative h-28 w-28 overflow-hidden rounded-full border-4 border-white shadow-lg ring-2 ring-indigo-200">
+                {profilePreview ? (
+                  <Image
+                    src={profilePreview}
+                    alt="รูปโปรไฟล์ผู้บริหาร"
+                    fill
+                    className="object-cover"
+                    sizes="112px"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-200 to-sky-200 text-lg font-bold text-slate-700">
+                    {initials}
+                  </div>
+                )}
+              </div>
+              <span className="absolute bottom-1 right-1 inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white shadow-md transition group-hover:scale-105">
+                <Camera className="h-4 w-4" />
+              </span>
+            </label>
+            <div>
+              <p className="text-base font-bold text-slate-900">{user?.name ?? "ผู้บริหาร"}</p>
+              <p className="text-sm text-slate-600">{user?.department ?? "หน่วยงานผู้บริหาร"}</p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">แตะที่รูปเพื่อเปลี่ยนรูปโปรไฟล์</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-8 lg:grid-cols-2">
         <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
@@ -133,6 +270,64 @@ export function ExecutiveView() {
       </div>
 
       <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
+        <h2 className="text-lg font-bold text-slate-900">สรุปข้อมูลหลักสูตรและการอบรม</h2>
+        <p className="text-sm text-slate-600">
+          แสดงจำนวนหลักสูตรที่มีและจำนวนครูที่ผ่านการอบรมแยกตามหมวดหมู่
+        </p>
+
+        <div className="mt-4 h-72 rounded-[24px] border border-white/60 bg-white/60 p-3">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={courseOverviewRows} margin={{ top: 8, right: 12, left: 0, bottom: 40 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis
+                dataKey="category"
+                tick={{ fontSize: 10, fill: "#64748b" }}
+                interval={0}
+                angle={-12}
+                textAnchor="end"
+                height={64}
+              />
+              <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
+              <Tooltip
+                formatter={(value) => [`${Number(value ?? 0)} คน`, "ครูที่ผ่านการอบรม"]}
+                contentStyle={{ borderRadius: 16, borderColor: "#e2e8f0" }}
+              />
+              <Bar dataKey="trainedTeachers" radius={[12, 12, 0, 0]}>
+                {courseOverviewRows.map((_, i) => (
+                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="mt-5 overflow-x-auto rounded-[24px] border border-white/60 bg-white/60 p-3">
+          <table className="w-full min-w-[620px] border-separate border-spacing-y-2 text-sm">
+            <thead>
+              <tr className="text-left text-xs font-bold text-slate-500">
+                <th className="px-4 py-2">หมวดหมู่</th>
+                <th className="px-4 py-2">จำนวนหลักสูตรที่มี</th>
+                <th className="px-4 py-2">จำนวนครูที่ผ่านการอบรม</th>
+              </tr>
+            </thead>
+            <tbody>
+              {courseOverviewRows.map((row) => (
+                <tr
+                  key={row.category}
+                  className="cursor-pointer rounded-2xl bg-white/80 shadow-sm transition hover:bg-orange-50"
+                  onClick={() => setSelectedCategory(row.category)}
+                >
+                  <td className="rounded-l-2xl px-4 py-3 font-semibold text-slate-800">{row.category}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.availableCourses} หลักสูตร</td>
+                  <td className="rounded-r-2xl px-4 py-3 text-slate-700">{row.trainedTeachers} คน</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
         <h2 className="text-lg font-bold text-slate-900">สรุปพอร์ตโฟลิโอตามระดับกิจกรรม</h2>
         <p className="text-sm text-slate-600">
           จำนวนกิจกรรมที่บันทึกในระบบ จัดกลุ่มตามระดับ: ตนเอง, ชุมชน, สถานศึกษา, จังหวัด, ชาติ, นานาชาติ
@@ -148,7 +343,19 @@ export function ExecutiveView() {
             </thead>
             <tbody>
               {portfolioByLevel.map((row) => (
-                <tr key={row.level} className="border-b border-slate-100 last:border-0">
+                <tr
+                  key={row.level}
+                  className={`border-b border-slate-100 last:border-0 ${
+                    row.level === "ชาติ" || row.level === "นานาชาติ"
+                      ? "cursor-pointer transition hover:bg-pink-50"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    if (row.level === "ชาติ" || row.level === "นานาชาติ") {
+                      setSelectedPortfolioLevel(row.level);
+                    }
+                  }}
+                >
                   <td className="px-4 py-3 font-semibold text-slate-800">{row.level}</td>
                   <td className="px-4 py-3 text-slate-700">{row.count}</td>
                   <td className="px-4 py-3 text-slate-600">
@@ -164,34 +371,241 @@ export function ExecutiveView() {
       </section>
 
       <section className="rounded-[24px] border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-md">
-        <h2 className="text-lg font-bold text-slate-900">
-          ความเสี่ยงภาวะหมดไฟและภาระงานครู
-        </h2>
-        <p className="text-sm text-slate-600">
-          วิเคราะห์ภาระงานและความเสี่ยงหมดไฟรายแผนก เพื่อติดตามและวางแผนสนับสนุนเชิงรุก
-        </p>
-        <div className="mt-4 h-80">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">การวิเคราะห์ภาระงานและภาวะหมดไฟ</h2>
+            <p className="text-sm text-slate-600">
+              Workload &amp; Burnout Analytics — แผนภูมิกระจายภาระงานรวมเทียบกับคะแนนการมีส่วนร่วมของครู
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px] font-bold">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-emerald-800 ring-1 ring-emerald-200">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              โซนปลอดภัย
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-amber-900 ring-1 ring-amber-200">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              เฝ้าระวัง
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-3 py-1.5 text-rose-800 ring-1 ring-rose-200">
+              <span className="h-2 w-2 rounded-full bg-rose-500" />
+              ความเสี่ยงสูง
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-5 h-80 rounded-[24px] border border-white/60 bg-white/60 p-2">
+          {workloadRows.length === 0 && executiveDashboardLoading ? (
+            <div className="flex h-full items-center justify-center text-sm font-semibold text-slate-600">
+              กำลังโหลดแผนภูมิ...
+            </div>
+          ) : null}
+          {workloadRows.length === 0 && !executiveDashboardLoading ? (
+            <div className="flex h-full items-center justify-center text-sm font-semibold text-slate-600">
+              ยังไม่มีข้อมูลครู (role = teacher) หรือ workload_hours ในระบบ
+            </div>
+          ) : null}
+          {workloadRows.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={burnoutByDepartment} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <ScatterChart margin={{ top: 12, right: 16, bottom: 8, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="dept" tick={{ fontSize: 11, fill: "#64748b" }} interval={0} />
-              <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
-              <Tooltip
-                formatter={(v, name) => [
-                  `${Number(v ?? 0)}%`,
-                  name === "workload" ? "ระดับภาระงาน" : "ความเสี่ยงหมดไฟ",
-                ]}
-                contentStyle={{ borderRadius: 16 }}
+              <XAxis
+                type="number"
+                dataKey="workload"
+                name="ภาระงานรวม"
+                unit=" ชม./สัปดาห์"
+                tick={{ fontSize: 11, fill: "#64748b" }}
+                label={{ value: "ภาระงานรวม (ชั่วโมงสอน + งานสนับสนุน)", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 11 }}
               />
-              <Bar dataKey="workload" name="workload" fill="#f97316" radius={[10, 10, 0, 0]} />
-              <Bar dataKey="burnoutRisk" name="burnoutRisk" fill="#ec4899" radius={[10, 10, 0, 0]} />
-            </BarChart>
+              <YAxis
+                type="number"
+                dataKey="engagement"
+                name="การมีส่วนร่วม"
+                unit="%"
+                tick={{ fontSize: 11, fill: "#64748b" }}
+                label={{ value: "คะแนนการมีส่วนร่วม", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 11 }}
+              />
+              <Tooltip
+                cursor={{ strokeDasharray: "4 4" }}
+                formatter={(value, name) => {
+                  if (name === "ภาระงานรวม") return [`${Number(value ?? 0)} ชม./สัปดาห์`, name];
+                  if (name === "การมีส่วนร่วม") return [`${Number(value ?? 0)}%`, name];
+                  return [String(value ?? ""), String(name ?? "")];
+                }}
+                labelFormatter={(_, payload) => {
+                  const p = payload?.[0]?.payload as { dept?: string } | undefined;
+                  return p?.dept ? `แผนกวิชา: ${p.dept}` : "";
+                }}
+                contentStyle={{ borderRadius: 16, borderColor: "#e2e8f0" }}
+              />
+              <Scatter
+                name="แผนกวิชา"
+                data={workloadChartPoints}
+                fill="#8884d8"
+                shape={(props) => {
+                  const { cx, cy, payload } = props as {
+                    cx?: number;
+                    cy?: number;
+                    payload?: { risk?: "low" | "medium" | "high" };
+                  };
+                  if (cx == null || cy == null) return null;
+                  const fill = riskDotFill(payload?.risk ?? "medium");
+                  return (
+                    <circle cx={cx} cy={cy} r={9} fill={fill} fillOpacity={0.92} stroke="#ffffff" strokeWidth={2} />
+                  );
+                }}
+              />
+            </ScatterChart>
           </ResponsiveContainer>
+          ) : null}
         </div>
         <p className="mt-2 text-xs font-semibold text-slate-600">
-          สีส้ม = ภาระงานรวม · สีชมพู = ความเสี่ยงภาวะหมดไฟ
+          แกน X = ภาระงานรวมจาก workload_hours (จัดกลุ่มตามแผนกวิชา) · แกน Y = goal_achievement_percent จากโปรไฟล์ครู
         </p>
+
+        <div className="mt-6 overflow-x-auto rounded-[24px] border border-white/60 bg-white/60 p-3">
+          <table className="w-full min-w-[720px] border-separate border-spacing-y-2 text-sm">
+            <thead>
+              <tr className="text-left text-xs font-bold text-slate-500">
+                <th className="px-4 py-2">แผนกวิชา</th>
+                <th className="px-4 py-2">ชั่วโมงสอน</th>
+                <th className="px-4 py-2">งานสนับสนุนเพิ่มเติม</th>
+                <th className="px-4 py-2">การมีส่วนร่วม</th>
+                <th className="px-4 py-2">ระดับความเสี่ยง</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workloadRows.map((row) => (
+                <tr key={row.id} className="rounded-2xl bg-white/90 shadow-sm">
+                  <td className="rounded-l-2xl px-4 py-3 font-semibold text-slate-900">{row.dept}</td>
+                  <td className="px-4 py-3 text-slate-800">{row.teachingHours} ชม.</td>
+                  <td className="px-4 py-3 text-slate-800">{row.additionalTasksHours} ชม.</td>
+                  <td className="px-4 py-3 text-slate-800">{row.engagementScore}%</td>
+                  <td className="rounded-r-2xl px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1 ${riskBadgeClasses(row.riskLevel)}`}
+                    >
+                      {riskLabelTh(row.riskLevel)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-6 flex gap-4 rounded-[24px] border border-indigo-200/80 bg-gradient-to-br from-indigo-50/90 to-white/80 p-5 shadow-inner">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] bg-indigo-600 text-white shadow-md">
+            <Sparkles className="h-6 w-6" aria-hidden />
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">AI Recommendation</p>
+            <p className="mt-1 text-sm font-semibold leading-relaxed text-slate-900">{aiInsightText}</p>
+          </div>
+        </div>
       </section>
+
+      {selectedCategory ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm transition">
+          <div className="w-full max-w-3xl rounded-[24px] border border-white/60 bg-white/90 p-6 shadow-2xl transition-all">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">รายละเอียดหลักสูตรหมวดหมู่: {selectedCategory}</h3>
+                <p className="text-sm text-slate-600">รายการหลักสูตรและจำนวนครูที่จบหลักสูตร</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedCategory(null)}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800"
+              >
+                ปิด
+              </button>
+            </div>
+            <div className="overflow-x-auto rounded-2xl border border-slate-100">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="bg-slate-100 text-left text-xs font-bold text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3">ชื่อหลักสูตร</th>
+                    <th className="px-4 py-3">แหล่งที่มา</th>
+                    <th className="px-4 py-3">จำนวนครูที่จบหลักสูตร</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(courseDetailsByCategory[selectedCategory] ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
+                        ยังไม่มีรายละเอียดเป้าหมายในหมวดนี้ในฐานข้อมูล
+                      </td>
+                    </tr>
+                  ) : (
+                    (courseDetailsByCategory[selectedCategory] ?? []).map((course) => (
+                      <tr key={`${course.name}-${course.source}`} className="border-t border-slate-100">
+                        <td className="px-4 py-3 font-semibold text-slate-800">{course.name}</td>
+                        <td className="px-4 py-3 text-slate-700">{course.source}</td>
+                        <td className="px-4 py-3 text-slate-700">{course.completions} คน</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedPortfolioLevel ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm transition">
+          <div className="w-full max-w-2xl rounded-[24px] border border-white/60 bg-white/90 p-6 shadow-2xl transition-all">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">
+                  รายละเอียดผลงานระดับ{selectedPortfolioLevel}
+                </h3>
+                <p className="text-sm text-slate-600">แสดงเฉพาะกิจกรรมระดับสูงที่เผยแพร่เชิงต้นแบบ</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPortfolioLevel(null)}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800"
+              >
+                ปิด
+              </button>
+            </div>
+            <div className="overflow-x-auto rounded-2xl border border-slate-100">
+              <table className="w-full min-w-[500px] text-sm">
+                <thead className="bg-slate-100 text-left text-xs font-bold text-slate-600">
+                  <tr>
+                    <th className="px-4 py-3">ชื่อกิจกรรม/ผลงาน</th>
+                    <th className="px-4 py-3">ชื่อครูผู้ทำกิจกรรม</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(selectedPortfolioLevel === "ชาติ"
+                    ? nationalPortfolioDetails
+                    : internationalPortfolioDetails
+                  ).length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="px-4 py-6 text-center text-sm text-slate-500">
+                        ยังไม่มีกิจกรรมระดับนี้ในระบบ
+                      </td>
+                    </tr>
+                  ) : (
+                    (selectedPortfolioLevel === "ชาติ"
+                      ? nationalPortfolioDetails
+                      : internationalPortfolioDetails
+                    ).map((item) => (
+                      <tr key={`${item.activityName}-${item.teacherName}`} className="border-t border-slate-100">
+                        <td className="px-4 py-3 font-semibold text-slate-800">{item.activityName}</td>
+                        <td className="px-4 py-3 text-slate-700">{item.teacherName}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
